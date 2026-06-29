@@ -34,7 +34,7 @@
     "marked": "^17.0.1",
     "monaco-editor": "^0.55.1",
     "react": "^19.2.7",
-    "react-dom": "^19.1.0",
+    "react-dom": "^19.2.7",
     "yaml": "^2.6.0"
   },
   "devDependencies": {
