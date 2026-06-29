@@ -9,6 +9,12 @@ updates:
     labels:
       - "dependencies"
       - "javascript"
+    # Collapse all minor/patch bumps into a single PR; majors stay separate
+    # so breaking changes still get individual review.
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # Rust backend dependencies (Cargo)
   - package-ecosystem: "cargo"
@@ -19,6 +25,10 @@ updates:
     labels:
       - "dependencies"
       - "rust"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # GitHub Actions used in workflows
   - package-ecosystem: "github-actions"
@@ -28,3 +38,6 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    groups:
+      actions-all:
+        patterns: ["*"]
