@@ -1,0 +1,394 @@
+import { useRef, useEffect, useCallback, useState } from 'react';
+import Editor, { Monaco } from '@monaco-editor/react';
+import type { editor } from 'monaco-editor';
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
+import '../monaco-config'; // Configure Monaco workers
+
+interface EditorPanelProps {
+    content: string;
+    language: string;
+    editorTheme: string;
+    fontSize: number;
+    fontFamily: string;
+    wordWrap: boolean;
+    showMinimap: boolean;
+    isReadOnly: boolean;
+    enableColumnSelection: boolean;
+    tabSize: number;
+    insertSpaces: boolean;
+    cursorLine: number;
+    cursorColumn: number;
+    /** Custom keybinding string for Find (e.g. "Ctrl+F"). If omitted, uses Ctrl/Cmd+F. */
+    findKeybinding?: string;
+    /** Custom keybinding string for Find & Replace (e.g. "Ctrl+H"). If omitted, uses Ctrl/Cmd+H. */
+    replaceKeybinding?: string;
+    onChange: (value: string) => void;
+    onCursorChange: (line: number, column: number) => void;
+    onSelectionChange?: (selectionLength: number) => void;
+    onEditorReady?: (editor: editor.IStandaloneCodeEditor) => void;
+    onFocus?: () => void;
+}
+
+// Maps from the key string stored by KeybindingEditor (e.key / 'Space' / 'F1' etc.)
+// to candidate Monaco KeyCode names. Multiple candidates handle naming differences
+// across Monaco versions (e.g. 'Slash' in newer vs 'US_SLASH' in older builds).
+const MONACO_KEY_MAP: Record<string, string[]> = {
+    // Digits
+    '0': ['Digit0'], '1': ['Digit1'], '2': ['Digit2'], '3': ['Digit3'],
+    '4': ['Digit4'], '5': ['Digit5'], '6': ['Digit6'], '7': ['Digit7'],
+    '8': ['Digit8'], '9': ['Digit9'],
+    // Function keys
+    'F1':  ['F1'],  'F2':  ['F2'],  'F3':  ['F3'],  'F4':  ['F4'],
+    'F5':  ['F5'],  'F6':  ['F6'],  'F7':  ['F7'],  'F8':  ['F8'],
+    'F9':  ['F9'],  'F10': ['F10'], 'F11': ['F11'], 'F12': ['F12'],
+    // Whitespace / navigation
+    'SPACE':     ['Space'],
+    'TAB':       ['Tab'],
+    'ENTER':     ['Enter'],
+    'ESCAPE':    ['Escape'],
+    'BACKSPACE': ['Backspace'],
+    'DELETE':    ['Delete'],
+    // Symbols (stored uppercase by KeybindingEditor for length-1 chars)
+    '/':  ['Slash',       'US_SLASH'],
+    ',':  ['Comma',       'US_COMMA'],
+    '.':  ['Period',      'US_PERIOD'],
+    '=':  ['Equal',       'US_EQUAL'],
+    '-':  ['Minus',       'US_MINUS'],
+    ';':  ['Semicolon',   'US_SEMICOLON'],
+    "'":  ['Quote',       'US_QUOTE'],
+    '`':  ['Backquote',   'US_BACKTICK'],
+    '[':  ['BracketLeft', 'US_OPEN_SQUARE_BRACKET'],
+    ']':  ['BracketRight','US_CLOSE_SQUARE_BRACKET'],
+    '\\': ['Backslash',   'US_BACKSLASH'],
+};
+
+/**
+ * Parse a binding string like "Ctrl+Shift+G" or "Ctrl+1" into a Monaco keybinding
+ * number. Returns null if the key portion cannot be mapped (caller should fall back
+ * to the default keybinding).
+ */
+function parseMonacoKey(binding: string, monaco: Monaco): number | null {
+    const kc = monaco.KeyCode as unknown as Record<string, number>;
+    const parts = binding.split('+');
+    let result = 0;
+    let hasKey = false;
+
+    for (const part of parts) {
+        switch (part.toLowerCase()) {
+            case 'ctrl':
+            case 'cmd':
+                result |= monaco.KeyMod.CtrlCmd;
+                break;
+            case 'shift':
+                result |= monaco.KeyMod.Shift;
+                break;
+            case 'alt':
+            case 'option':
+                result |= monaco.KeyMod.Alt;
+                break;
+            default: {
+                const upper = part.toUpperCase();
+                // Letters A-Z → KeyCode.KeyA … KeyCode.KeyZ
+                if (upper.length === 1 && upper >= 'A' && upper <= 'Z') {
+                    const code = kc[`Key${upper}`];
+                    if (code !== undefined) { result |= code; hasKey = true; }
+                    break;
+                }
+                // Everything else: look up in the table (try each candidate name)
+                const candidates = MONACO_KEY_MAP[part] ?? MONACO_KEY_MAP[upper];
+                if (candidates) {
+                    for (const name of candidates) {
+                        const code = kc[name];
+                        if (code !== undefined) { result |= code; hasKey = true; break; }
+                    }
+                }
+                break;
+            }
+        }
+    }
+    return hasKey ? result : null;
+}
+
+export function EditorPanel({
+    content,
+    language,
+    editorTheme,
+    fontSize,
+    fontFamily,
+    wordWrap,
+    showMinimap,
+    isReadOnly,
+    tabSize,
+    insertSpaces,
+    cursorLine,
+    cursorColumn,
+    findKeybinding,
+    replaceKeybinding,
+    onChange,
+    onCursorChange,
+    onSelectionChange,
+    onEditorReady,
+    onFocus,
+}: EditorPanelProps) {
+    const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+    const monacoRef = useRef<Monaco | null>(null);
+    // Tracks the Monaco keybinding values that are currently registered, so that
+    // when the user changes a binding we can no-op the old key before registering
+    // the new one (Monaco addCommand uses last-registered-wins for the same key).
+    const activeFindKeyRef = useRef<number | null>(null);
+    const activeReplaceKeyRef = useRef<number | null>(null);
+    const [isEditorReady, setIsEditorReady] = useState(false);
+
+    // True while the user is holding the mouse button inside the editor.
+    // The cursor-sync useEffect checks this flag and skips setPosition() while a drag is
+    // in progress.  Without this guard the state/prop round-trip lags behind Monaco's actual
+    // cursor during a drag-select, and the stale prop triggers setPosition() mid-stroke —
+    // collapsing the selection and making it impossible to select more than a line or two.
+    const isDraggingRef = useRef(false);
+
+    // Force-tokenize all lines after language changes or on initial mount.
+    // Monaco's background tokenizer processes lines lazily in small batches to stay
+    // responsive; on larger files this leaves some lines un-highlighted until scrolled.
+    // forceTokenization() runs synchronously up to the given line number, ensuring
+    // the full file is highlighted as soon as the editor (or language) is ready.
+    useEffect(() => {
+        if (!isEditorReady || !editorRef.current) return;
+        const model = editorRef.current.getModel();
+        if (!model) return;
+        // Defer one frame so Monaco finishes its own language-switch bookkeeping first.
+        const raf = requestAnimationFrame(() => {
+            if (!model.isDisposed()) {
+                // forceTokenization is part of Monaco's internal API not in public typedefs
+                (model as unknown as { forceTokenization(line: number): void })
+                    .forceTokenization(model.getLineCount());
+            }
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [isEditorReady, language]);
+
+    // Wire up the drag-detection listeners once the editor DOM node is available.
+    // Also toggles columnSelection based on Alt key so Alt+drag = column select,
+    // normal drag = normal selection.
+    useEffect(() => {
+        if (!isEditorReady || !editorRef.current) return;
+        const domNode = editorRef.current.getDomNode();
+        if (!domNode) return;
+        const onMouseDown = () => { isDraggingRef.current = true; };
+        const onMouseUp   = () => { isDraggingRef.current = false; };
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Alt') editorRef.current?.updateOptions({ columnSelection: true });
+        };
+        const onKeyUp = (e: KeyboardEvent) => {
+            if (e.key === 'Alt') editorRef.current?.updateOptions({ columnSelection: false });
+        };
+        domNode.addEventListener('mousedown', onMouseDown);
+        window.addEventListener('mouseup', onMouseUp);   // global — catches release anywhere
+        window.addEventListener('keydown', onKeyDown);
+        window.addEventListener('keyup', onKeyUp);
+        return () => {
+            domNode.removeEventListener('mousedown', onMouseDown);
+            window.removeEventListener('mouseup', onMouseUp);
+            window.removeEventListener('keydown', onKeyDown);
+            window.removeEventListener('keyup', onKeyUp);
+        };
+    }, [isEditorReady]);
+
+    useEffect(() => {
+        if (!isEditorReady || !editorRef.current || !monacoRef.current) return;
+        const editor = editorRef.current;
+        const monaco = monacoRef.current;
+
+        const defaultFindKey = monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF;
+        const defaultReplaceKey = monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyH;
+
+        const newFindKey = findKeybinding
+            ? (parseMonacoKey(findKeybinding, monaco) ?? defaultFindKey)
+            : defaultFindKey;
+        const newReplaceKey = replaceKeybinding
+            ? (parseMonacoKey(replaceKeybinding, monaco) ?? defaultReplaceKey)
+            : defaultReplaceKey;
+
+        // If the find key changed, no-op the old one so it no longer opens Monaco's
+        // built-in find widget or fires the previous custom handler.
+        if (activeFindKeyRef.current !== null && activeFindKeyRef.current !== newFindKey) {
+            editor.addCommand(activeFindKeyRef.current, () => { /* no-op: key was rebound */ });
+        }
+        editor.addCommand(newFindKey, () => {
+            window.dispatchEvent(new CustomEvent('zitext-find'));
+        });
+        activeFindKeyRef.current = newFindKey;
+
+        if (activeReplaceKeyRef.current !== null && activeReplaceKeyRef.current !== newReplaceKey) {
+            editor.addCommand(activeReplaceKeyRef.current, () => { /* no-op: key was rebound */ });
+        }
+        editor.addCommand(newReplaceKey, () => {
+            window.dispatchEvent(new CustomEvent('zitext-replace'));
+        });
+        activeReplaceKeyRef.current = newReplaceKey;
+    }, [isEditorReady, findKeybinding, replaceKeybinding]);
+
+    useEffect(() => {
+        if (!editorRef.current) return;
+        // If this prop update is just the editor's own position echoed back through
+        // state, skip it — calling setPosition() here would collapse the user's
+        // Never call setPosition() while the mouse is held in the editor.
+        // The state/prop round-trip lags behind Monaco's actual position during a
+        // drag-select, so a stale prop would collapse the in-progress selection.
+        if (isDraggingRef.current) return;
+        const pos = editorRef.current.getPosition();
+        if (pos && pos.lineNumber === cursorLine && pos.column === cursorColumn) return;
+        editorRef.current.setPosition({ lineNumber: cursorLine, column: cursorColumn });
+        editorRef.current.revealLineInCenterIfOutsideViewport(cursorLine);
+    }, [cursorLine, cursorColumn]);
+
+    const handleEditorWillMount = (monaco: Monaco) => {
+        monacoRef.current = monaco;
+        monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+            validate: true,
+            allowComments: false,
+            schemas: [],
+            enableSchemaRequest: true,
+        });
+        monaco.languages.typescript.javascriptDefaults.setEagerModelSync(true);
+        monaco.languages.typescript.typescriptDefaults.setEagerModelSync(true);
+    };
+
+    const handleEditorDidMount = useCallback((editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
+        editorRef.current = editor;
+        // Keybinding overrides (Find / Replace) are registered in the useEffect above,
+        // which fires once isEditorReady becomes true.
+        setIsEditorReady(true);
+
+        editor.setPosition({ lineNumber: cursorLine, column: cursorColumn });
+
+        editor.onDidChangeCursorPosition((e) => {
+            onCursorChange(e.position.lineNumber, e.position.column);
+        });
+
+        // Track selection length
+        if (onSelectionChange) {
+            editor.onDidChangeCursorSelection(() => {
+                const selection = editor.getSelection();
+                if (selection && !selection.isEmpty()) {
+                    const model = editor.getModel();
+                    if (model) {
+                        const text = model.getValueInRange(selection);
+                        onSelectionChange(text.length);
+                    }
+                } else {
+                    onSelectionChange(0);
+                }
+            });
+        }
+
+        // Track focus
+        if (onFocus) {
+            editor.onDidFocusEditorText(onFocus);
+        }
+
+        if (onEditorReady) {
+            onEditorReady(editor);
+        }
+
+        // Route clipboard actions through the Tauri clipboard plugin. Monaco's built-in
+        // context-menu Copy/Cut/Paste rely on document.execCommand, which the Windows
+        // WebView2 blocks (notably paste) — so right-click Copy/Paste silently did nothing
+        // (QA ZITEXT_V2_004). These overrides make them work consistently cross-platform.
+        const selectedText = () => {
+            const sel = editor.getSelection();
+            const model = editor.getModel();
+            if (!sel || !model || sel.isEmpty()) return '';
+            return model.getValueInRange(sel);
+        };
+        editor.addAction({
+            id: 'zitext.clipboardCopy',
+            label: 'Copy',
+            contextMenuGroupId: '9_cutcopypaste',
+            contextMenuOrder: 1,
+            precondition: 'editorTextFocus',
+            keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC],
+            run: async () => { const t = selectedText(); if (t) await writeText(t); },
+        });
+        editor.addAction({
+            id: 'zitext.clipboardCut',
+            label: 'Cut',
+            contextMenuGroupId: '9_cutcopypaste',
+            contextMenuOrder: 2,
+            precondition: 'editorTextFocus && !editorReadonly',
+            keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX],
+            run: async (ed) => {
+                const t = selectedText();
+                if (!t) return;
+                await writeText(t);
+                const sel = ed.getSelection();
+                if (sel) ed.executeEdits('clipboard', [{ range: sel, text: '', forceMoveMarkers: true }]);
+            },
+        });
+        editor.addAction({
+            id: 'zitext.clipboardPaste',
+            label: 'Paste',
+            contextMenuGroupId: '9_cutcopypaste',
+            contextMenuOrder: 3,
+            precondition: 'editorTextFocus && !editorReadonly',
+            keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV],
+            run: async (ed) => {
+                const text = await readText();
+                if (text == null) return;
+                const sel = ed.getSelection();
+                if (sel) ed.executeEdits('clipboard', [{ range: sel, text, forceMoveMarkers: true }]);
+                ed.focus();
+            },
+        });
+
+        editor.focus();
+    }, [cursorLine, cursorColumn, onCursorChange, onSelectionChange, onFocus, onEditorReady]);
+
+    function handleEditorChange(value: string | undefined) {
+        if (value !== undefined) {
+            onChange(value);
+        }
+    }
+
+    return (
+        <div className="editor-panel">
+            <Editor
+                height="100%"
+                language={language}
+                value={content}
+                theme={editorTheme}
+                beforeMount={handleEditorWillMount}
+                onChange={handleEditorChange}
+                onMount={handleEditorDidMount}
+                options={{
+                    fontSize,
+                    fontFamily,
+                    wordWrap: wordWrap ? 'on' : 'off',
+                    readOnly: isReadOnly,
+                    lineNumbers: 'on',
+                    minimap: { enabled: showMinimap },
+                    scrollBeyondLastLine: false,
+                    automaticLayout: true,
+                    renderLineHighlight: 'all',
+                    cursorBlinking: 'smooth',
+                    smoothScrolling: true,
+                    contextmenu: true,
+                    selectOnLineNumbers: true,
+                    roundedSelection: false,
+                    fixedOverflowWidgets: true,
+                    padding: { top: 10, bottom: 10 },
+                    columnSelection: false,
+                    tabSize,
+                    insertSpaces,
+                    detectIndentation: false,
+                    bracketPairColorization: { enabled: true },
+                    folding: true,
+                    foldingStrategy: 'auto',
+                    foldingHighlight: true,
+                    foldingImportsByDefault: false,
+                    showFoldingControls: 'always',
+                    unfoldOnClickAfterEndOfLine: true,
+                }}
+            />
+        </div>
+    );
+}

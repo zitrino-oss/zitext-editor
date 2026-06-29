@@ -1,0 +1,6 @@
+[advisories]
+# RUSTSEC-2026-0097: rand 0.8.5 unsound with custom logger using rand::rng()
+# This is a transitive dependency via: rand → phf_generator → markup5ever →
+# html5ever → tauri-utils → tauri. Cannot be fixed by direct dep update;
+# awaiting upstream Tauri to bump their dependency on rand.
+ignore = ["RUSTSEC-2026-0097"]

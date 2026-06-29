@@ -1,0 +1,11 @@
+ZITEXT Editor
+Copyright 2026 Zitrino
+
+This product includes software developed by Zitrino (https://zitext.com).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file for the
+full license text.
+
+This product bundles third-party open-source components, including the Monaco
+Editor and the dependencies listed in package.json and src-tauri/Cargo.toml,
+each distributed under its own license.

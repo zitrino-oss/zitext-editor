@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/png" href="/app-icon.png" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Self-hosted fonts (see public/fonts.css) — no external font requests. -->
+  <link rel="stylesheet" href="/fonts.css" />
+  <title>ZITEXT Editor</title>
+  <!-- Let the webview style native UI (scrollbars/form controls) for both
+       schemes and report prefers-color-scheme accurately, esp. on WKWebView. -->
+  <meta name="color-scheme" content="light dark" />
+  <!--
+    Apply the theme before paint to prevent a flash of the wrong theme on
+    Windows WebView2 (which defaults to a white window). The actual settings
+    load happens async after React mounts; this just makes the very first
+    paint correct. A returning user's saved choice (localStorage) wins; on a
+    fresh install with no cached preference we follow the OS theme, which is
+    what loadSettings will then persist. Falls back to dark only if both
+    localStorage and matchMedia are unavailable.
+  -->
+  <script src="/theme-init.js"></script>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

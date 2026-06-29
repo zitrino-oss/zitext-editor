@@ -1,0 +1,396 @@
+{
+  "productName": "ZITEXT Editor",
+  "version": "2.1.3",
+  "identifier": "com.zitrino.zitext",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ZITEXT Editor",
+        "width": 1200,
+        "height": 800,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: https://asset.localhost; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' ipc: https://ipc.localhost https://zitext.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.13",
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.sectigo.com",
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "languages": [
+          "English"
+        ],
+        "template": null
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1",
+          "librsvg2-2"
+        ]
+      }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "txt"
+        ],
+        "name": "Plain Text File",
+        "description": "Plain text document",
+        "role": "Editor",
+        "mimeType": "text/plain"
+      },
+      {
+        "ext": [
+          "md",
+          "markdown"
+        ],
+        "name": "Markdown File",
+        "description": "Markdown document",
+        "role": "Editor",
+        "mimeType": "text/markdown"
+      },
+      {
+        "ext": [
+          "json"
+        ],
+        "name": "JSON File",
+        "description": "JSON data file",
+        "role": "Editor",
+        "mimeType": "application/json"
+      },
+      {
+        "ext": [
+          "xml"
+        ],
+        "name": "XML File",
+        "description": "XML document",
+        "role": "Editor",
+        "mimeType": "application/xml"
+      },
+      {
+        "ext": [
+          "yaml",
+          "yml"
+        ],
+        "name": "YAML File",
+        "description": "YAML configuration file",
+        "role": "Editor",
+        "mimeType": "application/x-yaml"
+      },
+      {
+        "ext": [
+          "html",
+          "htm"
+        ],
+        "name": "HTML File",
+        "description": "HTML document",
+        "role": "Editor",
+        "mimeType": "text/html"
+      },
+      {
+        "ext": [
+          "css"
+        ],
+        "name": "CSS File",
+        "description": "Cascading Style Sheet",
+        "role": "Editor",
+        "mimeType": "text/css"
+      },
+      {
+        "ext": [
+          "js",
+          "mjs",
+          "cjs",
+          "jsx"
+        ],
+        "name": "JavaScript File",
+        "description": "JavaScript source code",
+        "role": "Editor",
+        "mimeType": "text/javascript"
+      },
+      {
+        "ext": [
+          "ts",
+          "tsx",
+          "mts",
+          "cts"
+        ],
+        "name": "TypeScript File",
+        "description": "TypeScript source code",
+        "role": "Editor",
+        "mimeType": "text/typescript"
+      },
+      {
+        "ext": [
+          "scss",
+          "sass",
+          "less"
+        ],
+        "name": "CSS Preprocessor File",
+        "description": "SCSS/Sass/Less stylesheet",
+        "role": "Editor",
+        "mimeType": "text/css"
+      },
+      {
+        "ext": [
+          "py"
+        ],
+        "name": "Python File",
+        "description": "Python source code",
+        "role": "Editor",
+        "mimeType": "text/x-python"
+      },
+      {
+        "ext": [
+          "java"
+        ],
+        "name": "Java File",
+        "description": "Java source code",
+        "role": "Editor",
+        "mimeType": "text/x-java"
+      },
+      {
+        "ext": [
+          "c",
+          "h"
+        ],
+        "name": "C Source File",
+        "description": "C source code",
+        "role": "Editor",
+        "mimeType": "text/x-c"
+      },
+      {
+        "ext": [
+          "cpp",
+          "cc",
+          "cxx",
+          "hpp"
+        ],
+        "name": "C++ Source File",
+        "description": "C++ source code",
+        "role": "Editor",
+        "mimeType": "text/x-c++"
+      },
+      {
+        "ext": [
+          "rs"
+        ],
+        "name": "Rust File",
+        "description": "Rust source code",
+        "role": "Editor",
+        "mimeType": "text/x-rust"
+      },
+      {
+        "ext": [
+          "go"
+        ],
+        "name": "Go File",
+        "description": "Go source code",
+        "role": "Editor",
+        "mimeType": "text/x-go"
+      },
+      {
+        "ext": [
+          "rb"
+        ],
+        "name": "Ruby File",
+        "description": "Ruby source code",
+        "role": "Editor",
+        "mimeType": "text/x-ruby"
+      },
+      {
+        "ext": [
+          "php"
+        ],
+        "name": "PHP File",
+        "description": "PHP source code",
+        "role": "Editor",
+        "mimeType": "text/x-php"
+      },
+      {
+        "ext": [
+          "swift"
+        ],
+        "name": "Swift File",
+        "description": "Swift source code",
+        "role": "Editor",
+        "mimeType": "text/x-swift"
+      },
+      {
+        "ext": [
+          "kt",
+          "kts"
+        ],
+        "name": "Kotlin File",
+        "description": "Kotlin source code",
+        "role": "Editor",
+        "mimeType": "text/x-kotlin"
+      },
+      {
+        "ext": [
+          "scala"
+        ],
+        "name": "Scala File",
+        "description": "Scala source code",
+        "role": "Editor",
+        "mimeType": "text/x-scala"
+      },
+      {
+        "ext": [
+          "lua"
+        ],
+        "name": "Lua File",
+        "description": "Lua source code",
+        "role": "Editor",
+        "mimeType": "text/x-lua"
+      },
+      {
+        "ext": [
+          "pl",
+          "pm",
+          "perl"
+        ],
+        "name": "Perl File",
+        "description": "Perl source code",
+        "role": "Editor",
+        "mimeType": "text/x-perl"
+      },
+      {
+        "ext": [
+          "r"
+        ],
+        "name": "R File",
+        "description": "R source code",
+        "role": "Editor",
+        "mimeType": "text/x-r"
+      },
+      {
+        "ext": [
+          "sql"
+        ],
+        "name": "SQL File",
+        "description": "SQL script",
+        "role": "Editor",
+        "mimeType": "text/x-sql"
+      },
+      {
+        "ext": [
+          "sh",
+          "bash",
+          "zsh",
+          "fish"
+        ],
+        "name": "Shell Script",
+        "description": "Shell script",
+        "role": "Editor",
+        "mimeType": "text/x-shellscript"
+      },
+      {
+        "ext": [
+          "ps1",
+          "psm1",
+          "psd1"
+        ],
+        "name": "PowerShell Script",
+        "description": "PowerShell script",
+        "role": "Editor",
+        "mimeType": "text/x-powershell"
+      },
+      {
+        "ext": [
+          "bat",
+          "cmd"
+        ],
+        "name": "Batch Script",
+        "description": "Windows batch script",
+        "role": "Editor",
+        "mimeType": "text/x-batch"
+      },
+      {
+        "ext": [
+          "tex",
+          "sty",
+          "cls"
+        ],
+        "name": "LaTeX File",
+        "description": "LaTeX document",
+        "role": "Editor",
+        "mimeType": "text/x-latex"
+      },
+      {
+        "ext": [
+          "toml"
+        ],
+        "name": "TOML File",
+        "description": "TOML configuration file",
+        "role": "Editor",
+        "mimeType": "application/toml"
+      },
+      {
+        "ext": [
+          "ini",
+          "conf",
+          "cfg"
+        ],
+        "name": "Configuration File",
+        "description": "Configuration file",
+        "role": "Editor",
+        "mimeType": "text/plain"
+      },
+      {
+        "ext": [
+          "log"
+        ],
+        "name": "Log File",
+        "description": "Log file",
+        "role": "Viewer",
+        "mimeType": "text/plain"
+      },
+      {
+        "ext": [
+          "csv"
+        ],
+        "name": "CSV File",
+        "description": "Comma-separated values",
+        "role": "Editor",
+        "mimeType": "text/csv"
+      }
+    ]
+  }
+}

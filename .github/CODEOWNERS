@@ -1,0 +1,13 @@
+# Code owners for ZITEXT Editor.
+# These owners are requested for review on every PR and — once branch
+# protection requires Code Owner review — must approve before merge.
+# See: https://docs.github.com/articles/about-code-owners
+
+# Default owner for everything in the repo
+*                       @zitrino-oss/maintainers
+
+# CI, release pipeline, and repository governance
+/.github/               @zitrino-oss/maintainers
+
+# Rust backend
+/src-tauri/             @zitrino-oss/maintainers

@@ -1,0 +1,651 @@
+name: Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.1.0)'
+        required: true
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+  # Untrusted trigger inputs are passed through the environment (never
+  # interpolated directly into shell/pwsh run-steps) to prevent command
+  # injection via a crafted tag name or workflow_dispatch input.
+  INPUT_VERSION: ${{ github.event.inputs.version }}
+  REF_NAME: ${{ github.ref_name }}
+
+jobs:
+  # ── Pre-flight audit ────────────────────────────────────────────────
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: npm audit (production)
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: cargo audit
+        working-directory: src-tauri
+        run: cargo audit
+
+  build-macos:
+    needs: audit
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set version in tauri.conf.json
+        run: |
+          VERSION="${INPUT_VERSION:-$REF_NAME}"
+          VERSION="${VERSION#v}"
+          # Validate strict semver before use, and pass the value through the
+          # environment so it is never interpolated into the node -e source
+          # (prevents script injection via a crafted tag name / dispatch input).
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid version: $VERSION" >&2; exit 1
+          fi
+          APP_VERSION="$VERSION" node -e "
+            const fs = require('fs');
+            const c = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
+            c.version = process.env.APP_VERSION;
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(c, null, 2) + '\n');
+          "
+
+      - name: Import Apple certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          # No certificate configured (e.g. fork PRs / community builds without
+          # Apple secrets): skip signing setup and build unsigned instead of
+          # failing later at the codesign step.
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE not set — skipping macOS signing setup (unsigned build)."
+            exit 0
+          fi
+
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          
+          # Import certificate
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security import certificate.p12 -k $KEYCHAIN_PATH -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          
+          # Set default keychain
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          
+          rm certificate.p12
+
+          # The APPLE_SIGNING_IDENTITY secret isn't set, and current Tauri no
+          # longer auto-detects the identity from the keychain — without an
+          # explicit identity it codesigns with "" ("no identity found"), which
+          # is why this started failing. Resolve the Developer ID identity from
+          # the freshly imported certificate and hand it to the build step.
+          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            APPLE_SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+              | awk -F'"' '/Developer ID Application/{print $2; exit}')
+          fi
+          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::error::No Developer ID Application identity found in the imported certificate."
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+            exit 1
+          fi
+          echo "Using signing identity: $APPLE_SIGNING_IDENTITY"
+          echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build Tauri app
+        run: |
+          npm run tauri build -- --target ${{ matrix.target }}
+
+      - name: Notarize macOS app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          # Find the DMG file
+          if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
+            DMG_PATH=$(find src-tauri/target/${{ matrix.target }}/release/bundle/dmg -name "*.dmg" | head -n 1)
+            ARCH="arm64"
+          else
+            DMG_PATH=$(find src-tauri/target/${{ matrix.target }}/release/bundle/dmg -name "*.dmg" | head -n 1)
+            ARCH="x64"
+          fi
+          
+          echo "Found DMG: $DMG_PATH"
+          
+          # Notarize + staple only when credentials are configured; otherwise
+          # ship the (unsigned) DMG as-is so the build still succeeds.
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
+            xcrun notarytool submit "$DMG_PATH" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --wait
+            xcrun stapler staple "$DMG_PATH"
+          else
+            echo "Notarization credentials not set — skipping notarization/stapling."
+          fi
+          
+          # Rename file
+          VERSION="${INPUT_VERSION:-$REF_NAME}"
+          VERSION="${VERSION#v}"  # Remove 'v' prefix if present
+          NEW_NAME="ZITEXT-${VERSION}-macOS-${ARCH}.dmg"
+          mv "$DMG_PATH" "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/$NEW_NAME"
+          
+          echo "DMG_FILE=$NEW_NAME" >> $GITHUB_ENV
+          echo "DMG_PATH=src-tauri/target/${{ matrix.target }}/release/bundle/dmg/$NEW_NAME" >> $GITHUB_ENV
+
+      - name: Generate checksum
+        run: |
+          DMG_DIR=$(dirname "$DMG_PATH")
+          cd "$DMG_DIR"
+          shasum -a 256 "$DMG_FILE" > "${DMG_FILE}.sha256"
+          echo "SHA256_PATH=${DMG_DIR}/${DMG_FILE}.sha256" >> $GITHUB_ENV
+          echo "Checksum: $(cat ${DMG_FILE}.sha256)"
+
+      - name: Upload to Cloudflare R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          # Install pinned rclone with SHA-256 verification (supply-chain hardening)
+          RCLONE_VERSION="v1.74.3"
+          RCLONE_ZIP="rclone-${RCLONE_VERSION}-osx-arm64.zip"
+          curl -fsSL -O "https://downloads.rclone.org/${RCLONE_VERSION}/${RCLONE_ZIP}"
+          echo "33a435ab17023b686918ce9a3975aceb75fe1796c694f38f1993024be1f063f5  ${RCLONE_ZIP}" | shasum -a 256 -c -
+          unzip -q "${RCLONE_ZIP}"
+          sudo mkdir -p /usr/local/bin
+          sudo cp "rclone-${RCLONE_VERSION}-osx-arm64/rclone" /usr/local/bin/rclone
+          sudo chmod +x /usr/local/bin/rclone
+
+          # Configure rclone for R2
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf <<RCLONE_EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${R2_ACCESS_KEY_ID}
+          secret_access_key = ${R2_SECRET_ACCESS_KEY}
+          endpoint = https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+          acl = public-read
+          no_check_bucket = true
+          RCLONE_EOF
+          sed -i '' 's/^          //' ~/.config/rclone/rclone.conf
+
+          # Get version
+          VERSION="${INPUT_VERSION:-$REF_NAME}"
+          VERSION="${VERSION#v}"
+
+          # Upload installer and its checksum
+          rclone copy "$DMG_PATH" "r2:$R2_BUCKET_NAME/v$VERSION/" -v
+          rclone copy "$SHA256_PATH" "r2:$R2_BUCKET_NAME/v$VERSION/" -v
+
+          echo "✅ Uploaded $DMG_FILE and checksum to R2 bucket: $R2_BUCKET_NAME/v$VERSION/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.target }}
+          path: |
+            ${{ env.DMG_PATH }}
+            ${{ env.SHA256_PATH }}
+
+  build-windows:
+    needs: audit
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set version in tauri.conf.json
+        shell: pwsh
+        run: |
+          $version = "$env:INPUT_VERSION"
+          if (-not $version) { $version = "$env:REF_NAME" }
+          $version = $version.TrimStart('v')
+          # Validate strict semver before writing it into the config.
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$') {
+            Write-Error "Invalid version: $version"; exit 1
+          }
+          $config = Get-Content "src-tauri\tauri.conf.json" -Raw | ConvertFrom-Json
+          $config.version = $version
+          $config | ConvertTo-Json -Depth 100 | Set-Content "src-tauri\tauri.conf.json" -Encoding UTF8
+
+      - name: Build Tauri app
+        run: npm run tauri build
+
+      - name: Sign Windows executable (if certificate available)
+        continue-on-error: true
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          # Decode certificate
+          $cert = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          [IO.File]::WriteAllBytes("certificate.pfx", $cert)
+          
+          # Import certificate
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          Import-PfxCertificate -FilePath certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          
+          # Sign MSI and NSIS installer
+          $msi = Get-ChildItem -Path "src-tauri\target\release\bundle\msi" -Filter "*.msi" | Select-Object -First 1
+          $nsis = Get-ChildItem -Path "src-tauri\target\release\bundle\nsis" -Filter "*-setup.exe" | Select-Object -First 1
+
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Filter "signtool.exe" -Recurse | Where-Object { $_.FullName -like "*x64*" } | Select-Object -Last 1
+
+          if ($msi -and $signtool) {
+            & $signtool.FullName sign /f certificate.pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 $msi.FullName
+          }
+
+          if ($nsis -and $signtool) {
+            & $signtool.FullName sign /f certificate.pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 $nsis.FullName
+          }
+          
+          Remove-Item certificate.pfx
+
+      - name: Rename artifacts
+        shell: pwsh
+        run: |
+          $version = "$env:INPUT_VERSION"
+          if (-not $version) { $version = "$env:REF_NAME" }
+          $version = $version.TrimStart('v')
+          
+          # Rename MSI
+          $msi = Get-ChildItem -Path "src-tauri\target\release\bundle\msi" -Filter "*.msi" | Select-Object -First 1
+          if ($msi) {
+            $newMsiName = "ZITEXT-$version-Windows-x64.msi"
+            Rename-Item -Path $msi.FullName -NewName $newMsiName
+            echo "MSI_FILE=$newMsiName" >> $env:GITHUB_ENV
+            echo "MSI_PATH=src-tauri\target\release\bundle\msi\$newMsiName" >> $env:GITHUB_ENV
+          }
+          
+          # Rename NSIS installer (.exe)
+          $nsis = Get-ChildItem -Path "src-tauri\target\release\bundle\nsis" -Filter "*-setup.exe" | Select-Object -First 1
+          if ($nsis) {
+            $newExeName = "ZITEXT-$version-Windows-x64.exe"
+            Rename-Item -Path $nsis.FullName -NewName $newExeName
+            echo "EXE_FILE=$newExeName" >> $env:GITHUB_ENV
+            echo "EXE_PATH=src-tauri\target\release\bundle\nsis\$newExeName" >> $env:GITHUB_ENV
+          }
+
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          if ($env:MSI_PATH) {
+            $hash = (Get-FileHash $env:MSI_PATH -Algorithm SHA256).Hash.ToLower()
+            "$hash  $env:MSI_FILE" | Out-File "${env:MSI_PATH}.sha256" -Encoding ASCII
+            echo "MSI_SHA256_PATH=${env:MSI_PATH}.sha256" >> $env:GITHUB_ENV
+            Write-Host "MSI checksum: $hash  $env:MSI_FILE"
+          }
+          if ($env:EXE_PATH) {
+            $hash = (Get-FileHash $env:EXE_PATH -Algorithm SHA256).Hash.ToLower()
+            "$hash  $env:EXE_FILE" | Out-File "${env:EXE_PATH}.sha256" -Encoding ASCII
+            echo "EXE_SHA256_PATH=${env:EXE_PATH}.sha256" >> $env:GITHUB_ENV
+            Write-Host "EXE checksum: $hash  $env:EXE_FILE"
+          }
+
+      - name: Upload to Cloudflare R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        shell: pwsh
+        run: |
+          # Install pinned rclone with SHA-256 verification (supply-chain hardening)
+          $rcloneVersion = "v1.74.3"
+          $rcloneZip = "rclone-$rcloneVersion-windows-amd64.zip"
+          $rcloneSha = "ecb0ed9006e0d1a693757007716a11dab6c2cde6dac3f2fd87da962eaa73d11d"
+          Invoke-WebRequest -Uri "https://downloads.rclone.org/$rcloneVersion/$rcloneZip" -OutFile "rclone.zip"
+          $actual = (Get-FileHash "rclone.zip" -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $rcloneSha) { Write-Error "rclone checksum mismatch: got $actual"; exit 1 }
+          Expand-Archive -Path "rclone.zip" -DestinationPath "." -Force
+          $rclonePath = Get-ChildItem -Path "." -Filter "rclone.exe" -Recurse | Select-Object -First 1
+
+          # Configure rclone
+          $configDir = "$env:APPDATA\rclone"
+          New-Item -ItemType Directory -Force -Path $configDir
+
+          $config = @"
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = $env:R2_ACCESS_KEY_ID
+          secret_access_key = $env:R2_SECRET_ACCESS_KEY
+          endpoint = https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com
+          acl = public-read
+          no_check_bucket = true
+          "@
+
+          $config | Out-File -FilePath "$configDir\rclone.conf" -Encoding ASCII
+
+          # Get version
+          $version = "$env:INPUT_VERSION"
+          if (-not $version) { $version = "$env:REF_NAME" }
+          $version = $version.TrimStart('v')
+
+          # Upload MSI and its checksum
+          if ($env:MSI_PATH) {
+            & $rclonePath.FullName copy $env:MSI_PATH "r2:$env:R2_BUCKET_NAME/v$version/" -v
+            & $rclonePath.FullName copy $env:MSI_SHA256_PATH "r2:$env:R2_BUCKET_NAME/v$version/" -v
+            Write-Host "✅ Uploaded $env:MSI_FILE and checksum to R2"
+          }
+
+          # Upload EXE and its checksum
+          if ($env:EXE_PATH) {
+            & $rclonePath.FullName copy $env:EXE_PATH "r2:$env:R2_BUCKET_NAME/v$version/" -v
+            & $rclonePath.FullName copy $env:EXE_SHA256_PATH "r2:$env:R2_BUCKET_NAME/v$version/" -v
+            Write-Host "✅ Uploaded $env:EXE_FILE and checksum to R2"
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            ${{ env.MSI_PATH }}
+            ${{ env.EXE_PATH }}
+            ${{ env.MSI_SHA256_PATH }}
+            ${{ env.EXE_SHA256_PATH }}
+
+  build-linux:
+    needs: audit
+    # Pin to 22.04 so the resulting .deb links against glibc 2.35 and
+    # libwebkit2gtk-4.1 versions available on Ubuntu 22.04 LTS and newer.
+    # Building on ubuntu-latest (24.04) produces artifacts that fail to
+    # launch on older-but-supported distros.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set version in tauri.conf.json
+        run: |
+          VERSION="${INPUT_VERSION:-$REF_NAME}"
+          VERSION="${VERSION#v}"
+          # Validate strict semver before use, and pass the value through the
+          # environment so it is never interpolated into the node -e source
+          # (prevents script injection via a crafted tag name / dispatch input).
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid version: $VERSION" >&2; exit 1
+          fi
+          APP_VERSION="$VERSION" node -e "
+            const fs = require('fs');
+            const c = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
+            c.version = process.env.APP_VERSION;
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(c, null, 2) + '\n');
+          "
+
+      - name: Build Tauri app
+        run: npm run tauri build
+
+      - name: Rename artifacts
+        run: |
+          VERSION="${INPUT_VERSION:-$REF_NAME}"
+          VERSION="${VERSION#v}"
+
+          # Rename AppImage
+          APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -n 1)
+          if [ -f "$APPIMAGE" ]; then
+            NEW_APPIMAGE="ZITEXT-${VERSION}-Linux-x64.AppImage"
+            mv "$APPIMAGE" "src-tauri/target/release/bundle/appimage/$NEW_APPIMAGE"
+            echo "APPIMAGE_FILE=$NEW_APPIMAGE" >> $GITHUB_ENV
+            echo "APPIMAGE_PATH=src-tauri/target/release/bundle/appimage/$NEW_APPIMAGE" >> $GITHUB_ENV
+          fi
+          
+          # Rename DEB
+          DEB=$(find src-tauri/target/release/bundle/deb -name "*.deb" | head -n 1)
+          if [ -f "$DEB" ]; then
+            NEW_DEB="ZITEXT-${VERSION}-Linux-amd64.deb"
+            mv "$DEB" "src-tauri/target/release/bundle/deb/$NEW_DEB"
+            echo "DEB_FILE=$NEW_DEB" >> $GITHUB_ENV
+            echo "DEB_PATH=src-tauri/target/release/bundle/deb/$NEW_DEB" >> $GITHUB_ENV
+          fi
+
+      - name: Generate checksums
+        run: |
+          if [ -f "$APPIMAGE_PATH" ]; then
+            (cd "$(dirname "$APPIMAGE_PATH")" && sha256sum "$APPIMAGE_FILE" > "${APPIMAGE_FILE}.sha256")
+            echo "APPIMAGE_SHA256_PATH=$(dirname "$APPIMAGE_PATH")/${APPIMAGE_FILE}.sha256" >> $GITHUB_ENV
+            echo "AppImage checksum: $(cat "$(dirname "$APPIMAGE_PATH")/${APPIMAGE_FILE}.sha256")"
+          fi
+          if [ -f "$DEB_PATH" ]; then
+            (cd "$(dirname "$DEB_PATH")" && sha256sum "$DEB_FILE" > "${DEB_FILE}.sha256")
+            echo "DEB_SHA256_PATH=$(dirname "$DEB_PATH")/${DEB_FILE}.sha256" >> $GITHUB_ENV
+            echo "DEB checksum: $(cat "$(dirname "$DEB_PATH")/${DEB_FILE}.sha256")"
+          fi
+
+      - name: GPG-sign Linux artifacts
+        if: env.GPG_PRIVATE_KEY != ''
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          if [ -f "$APPIMAGE_PATH" ]; then
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+              --detach-sign --armor "$APPIMAGE_PATH"
+            echo "APPIMAGE_SIG_PATH=${APPIMAGE_PATH}.asc" >> $GITHUB_ENV
+          fi
+          if [ -f "$DEB_PATH" ]; then
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+              --detach-sign --armor "$DEB_PATH"
+            echo "DEB_SIG_PATH=${DEB_PATH}.asc" >> $GITHUB_ENV
+          fi
+
+      - name: Upload to Cloudflare R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          # Install pinned rclone with SHA-256 verification (supply-chain hardening)
+          RCLONE_VERSION="v1.74.3"
+          RCLONE_ZIP="rclone-${RCLONE_VERSION}-linux-amd64.zip"
+          curl -fsSL -O "https://downloads.rclone.org/${RCLONE_VERSION}/${RCLONE_ZIP}"
+          echo "dbee7ccd7a5d617e4ed4cd4555c16669b511abfe8d31164f61be35ac9e999bd2  ${RCLONE_ZIP}" | sha256sum -c -
+          unzip -q "${RCLONE_ZIP}"
+          sudo mkdir -p /usr/local/bin
+          sudo cp "rclone-${RCLONE_VERSION}-linux-amd64/rclone" /usr/local/bin/rclone
+          sudo chmod +x /usr/local/bin/rclone
+
+          # Configure rclone
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf <<RCLONE_EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${R2_ACCESS_KEY_ID}
+          secret_access_key = ${R2_SECRET_ACCESS_KEY}
+          endpoint = https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+          acl = public-read
+          no_check_bucket = true
+          RCLONE_EOF
+          sed -i 's/^          //' ~/.config/rclone/rclone.conf
+
+          # Get version
+          VERSION="${INPUT_VERSION:-$REF_NAME}"
+          VERSION="${VERSION#v}"
+
+          # Upload AppImage, checksum, and GPG signature
+          if [ -f "$APPIMAGE_PATH" ]; then
+            rclone copy "$APPIMAGE_PATH" "r2:$R2_BUCKET_NAME/v$VERSION/" -v
+          fi
+          if [ -n "$APPIMAGE_SHA256_PATH" ] && [ -f "$APPIMAGE_SHA256_PATH" ]; then
+            rclone copy "$APPIMAGE_SHA256_PATH" "r2:$R2_BUCKET_NAME/v$VERSION/" -v
+          fi
+          if [ -n "$APPIMAGE_SIG_PATH" ] && [ -f "$APPIMAGE_SIG_PATH" ]; then
+            rclone copy "$APPIMAGE_SIG_PATH" "r2:$R2_BUCKET_NAME/v$VERSION/" -v
+          fi
+
+          # Upload DEB, checksum, and GPG signature
+          if [ -f "$DEB_PATH" ]; then
+            rclone copy "$DEB_PATH" "r2:$R2_BUCKET_NAME/v$VERSION/" -v
+          fi
+          if [ -n "$DEB_SHA256_PATH" ] && [ -f "$DEB_SHA256_PATH" ]; then
+            rclone copy "$DEB_SHA256_PATH" "r2:$R2_BUCKET_NAME/v$VERSION/" -v
+          fi
+          if [ -n "$DEB_SIG_PATH" ] && [ -f "$DEB_SIG_PATH" ]; then
+            rclone copy "$DEB_SIG_PATH" "r2:$R2_BUCKET_NAME/v$VERSION/" -v
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            ${{ env.APPIMAGE_PATH }}
+            ${{ env.DEB_PATH }}
+            ${{ env.APPIMAGE_SHA256_PATH }}
+            ${{ env.DEB_SHA256_PATH }}
+
+  # ── Publish release manifest ──────────────────────────────────────────
+  # Runs after all platform builds complete.
+  # Uploads latest.json to the R2 root so the website and in-app update
+  # checker always have an authoritative, version-agnostic pointer to the
+  # current release without any manual edits to the website code.
+  publish-manifest:
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate and publish latest.json
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          VERSION="${INPUT_VERSION:-$REF_NAME}"
+          VERSION="${VERSION#v}"
+          RELEASE_DATE=$(date -u +"%Y-%m-%d")
+
+          cat > latest.json <<JSON_EOF
+          {
+            "version": "$VERSION",
+            "releaseDate": "$RELEASE_DATE",
+            "downloads": {
+              "macOS-arm64":        "ZITEXT-${VERSION}-macOS-arm64.dmg",
+              "macOS-x64":          "ZITEXT-${VERSION}-macOS-x64.dmg",
+              "Windows-x64-msi":    "ZITEXT-${VERSION}-Windows-x64.msi",
+              "Windows-x64-exe":    "ZITEXT-${VERSION}-Windows-x64.exe",
+              "Linux-x64-AppImage": "ZITEXT-${VERSION}-Linux-x64.AppImage",
+              "Linux-amd64-deb":    "ZITEXT-${VERSION}-Linux-amd64.deb"
+            }
+          }
+          JSON_EOF
+          sed -i 's/^          //' latest.json
+
+          # Install pinned rclone with SHA-256 verification (supply-chain hardening)
+          RCLONE_VERSION="v1.74.3"
+          RCLONE_ZIP="rclone-${RCLONE_VERSION}-linux-amd64.zip"
+          curl -fsSL -O "https://downloads.rclone.org/${RCLONE_VERSION}/${RCLONE_ZIP}"
+          echo "dbee7ccd7a5d617e4ed4cd4555c16669b511abfe8d31164f61be35ac9e999bd2  ${RCLONE_ZIP}" | sha256sum -c -
+          unzip -q "${RCLONE_ZIP}"
+          sudo mkdir -p /usr/local/bin
+          sudo cp "rclone-${RCLONE_VERSION}-linux-amd64/rclone" /usr/local/bin/rclone
+          sudo chmod +x /usr/local/bin/rclone
+
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf <<RCLONE_EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${R2_ACCESS_KEY_ID}
+          secret_access_key = ${R2_SECRET_ACCESS_KEY}
+          endpoint = https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+          acl = public-read
+          no_check_bucket = true
+          RCLONE_EOF
+          sed -i 's/^          //' ~/.config/rclone/rclone.conf
+
+          rclone copy latest.json "r2:$R2_BUCKET_NAME/" -v
+          echo "✅ Published latest.json for v$VERSION"

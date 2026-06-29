@@ -1,0 +1,61 @@
+#!/bin/sh
+# Shell wrapper for ZITEXT Editor (macOS / Linux)
+# Supports: zitext [--wait|-w] [file|folder ...]
+# Install: sudo ln -sf "$(pwd)/zitext" /usr/local/bin/zitext
+
+set -e
+
+WAIT_MODE=0
+FILES=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --wait|-w)
+            WAIT_MODE=1
+            ;;
+        *)
+            FILES="$FILES $arg"
+            ;;
+    esac
+done
+
+# Resolve the app binary path
+if [ "$(uname)" = "Darwin" ]; then
+    APP_PATH="/Applications/ZITEXT Editor.app"
+    if [ ! -d "$APP_PATH" ]; then
+        echo "ZITEXT Editor not found at $APP_PATH" >&2
+        exit 1
+    fi
+    open -a "ZITEXT Editor" --args $FILES
+else
+    # Linux — find the AppImage or installed binary
+    BIN=$(command -v zitext-editor 2>/dev/null || echo "")
+    if [ -z "$BIN" ]; then
+        echo "ZITEXT Editor not found in PATH" >&2
+        exit 1
+    fi
+    "$BIN" $FILES &
+fi
+
+# --wait mode: poll for lock files created by the app
+if [ "$WAIT_MODE" = "1" ] && [ -n "$FILES" ]; then
+    for f in $FILES; do
+        # Skip flags
+        case "$f" in -*) continue ;; esac
+        # Resolve to absolute path
+        ABS_PATH=$(cd "$(dirname "$f")" 2>/dev/null && pwd)/$(basename "$f")
+        # Convert to lock file name (same scheme as Rust backend)
+        LOCK_NAME=$(echo "$ABS_PATH" | tr '/:' '___' | tr '\\' '_')
+        LOCK_FILE="$TMPDIR/zitext-wait-${LOCK_NAME}.lock"
+        # Fallback TMPDIR
+        [ -z "$TMPDIR" ] && LOCK_FILE="/tmp/zitext-wait-${LOCK_NAME}.lock"
+
+        # Wait up to 8 hours for the lock file to be deleted
+        TIMEOUT=28800
+        ELAPSED=0
+        while [ -f "$LOCK_FILE" ] && [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+            sleep 0.5
+            ELAPSED=$((ELAPSED + 1))
+        done
+    done
+fi

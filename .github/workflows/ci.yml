@@ -1,0 +1,38 @@
+name: CI
+
+# Frontend lint + type-check + build. Runs on every PR and on pushes to main,
+# providing a status check that branch protection can require before merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: this workflow only needs to read the repo.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Lint, type-check & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check & build
+        run: npm run build
