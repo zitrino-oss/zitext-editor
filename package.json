@@ -48,7 +48,7 @@
     "eslint": "^9.17.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.5.3",
-    "typescript": "~5.8.3",
+    "typescript": "~6.0.3",
     "vite": "^7.0.4",
     "vite-plugin-monaco-editor": "^1.1.0"
   }
