@@ -31,7 +31,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "dompurify": "^3.4.11",
     "github-markdown-css": "^5.9.0",
-    "marked": "^17.0.1",
+    "marked": "^18.0.5",
     "monaco-editor": "^0.55.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
