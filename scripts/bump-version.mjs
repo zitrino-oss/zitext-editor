@@ -64,7 +64,9 @@ const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (local node, 
 edit('CHANGELOG.md', (s) => {
     let out = s;
     // 1) Insert a dated section under [Unreleased] (skip if it already exists).
-    if (!new RegExp(`^## \\[${version.replace(/\./g, '\\.')}\\]`, 'm').test(out)) {
+    //    Plain string match (not a regex built from input) — `version` is
+    //    validated semver, and there's no need to construct a RegExp from it.
+    if (!out.includes(`## [${version}]`)) {
         out = out.replace(
             /## \[Unreleased\]\s*\n/,
             `## [Unreleased]\n\n## [${version}] - ${today}\n\n### Added\n\n### Changed\n\n### Fixed\n\n`
@@ -75,7 +77,7 @@ edit('CHANGELOG.md', (s) => {
         /\[Unreleased\]:\s*\S+/,
         `[Unreleased]: ${REPO}/compare/v${version}...HEAD`
     );
-    if (!new RegExp(`^\\[${version.replace(/\./g, '\\.')}\\]:`, 'm').test(out)) {
+    if (!out.includes(`[${version}]:`)) {
         out = out.replace(
             /(\[Unreleased\]:[^\n]*\n)/,
             `$1[${version}]: ${REPO}/releases/tag/v${version}\n`
