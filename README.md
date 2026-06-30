@@ -45,7 +45,7 @@ React, TypeScript, and the Monaco Editor. Simple, fast, and feature-rich.
 ## Getting started
 
 ```bash
-git clone https://github.com/zitrino-products/zitext-community.git
+git clone https://github.com/zitrino-oss/zitext-editor.git
 cd zitext-community
 npm install
 npm run tauri dev

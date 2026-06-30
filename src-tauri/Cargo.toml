@@ -4,7 +4,7 @@ version = "2.1.4"
 description = "A fast, lightweight, cross-platform text and code editor built with Tauri and Monaco."
 authors = ["Zitrino"]
 license = "Apache-2.0"
-repository = "https://github.com/zitrino-products/zitext-community"
+repository = "https://github.com/zitrino-oss/zitext-editor"
 homepage = "https://zitext.com"
 edition = "2021"
 
