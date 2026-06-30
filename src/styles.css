@@ -3484,6 +3484,8 @@ body {
 .modal-actions {
   padding: 0 36px 28px;
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   justify-content: center;
 }
 .modal-btn {

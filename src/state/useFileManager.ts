@@ -127,22 +127,31 @@ export function useFileManager(
             endTimer('file-open');
             addTab(newTab);
             added = true;
-            await addRecentFile(path);
 
-            // Trigger React state update for recent files if callback provided
-            if (onRecentFilesChanged) {
-                await onRecentFilesChanged();
-            }
-
-            // Only rebuild menu if not skipping (to avoid race conditions with menu clicks)
-            if (!skipMenuRebuild) {
-                await rebuildNativeMenu();
-            }
-
-            // Start watching file for external changes
+            // Start watching file for external changes (cheap, no UI cost).
             fileWatcher.watch(path, () => {
                 markExternallyModified(newTab.id);
             });
+
+            // Defer recent-files persistence and the native-menu rebuild until
+            // after the document paints. Rebuilding the macOS native menu runs on
+            // the main thread (shared with the WebView), so doing it inline holds
+            // the just-opened file off screen for a noticeable beat — especially
+            // for files opened from the Explorer (which don't skip the rebuild).
+            // A macrotask lets the editor render first, then the menu updates.
+            setTimeout(async () => {
+                try {
+                    await addRecentFile(path);
+                    if (onRecentFilesChanged) {
+                        await onRecentFilesChanged();
+                    }
+                    if (!skipMenuRebuild) {
+                        await rebuildNativeMenu();
+                    }
+                } catch (err) {
+                    console.error('[openFile] deferred recent-files/menu update failed:', err);
+                }
+            }, 0);
 
             return newTab.id;
         } catch (error) {
