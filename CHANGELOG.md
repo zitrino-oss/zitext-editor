@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.4]
+
+### Fixed
+- Fixed a blank window on launch caused by a mismatched `react` / `react-dom` version in the previous 2.1.4 build; both are now pinned to the same release.
+
+### Security
+- Added least-privilege `permissions:` blocks to all CI/release workflows.
+- Session identifiers now use `crypto.randomUUID()` instead of `Math.random()`.
+- Updated the `rand` crate to 0.8.6 (addresses a RUSTSEC advisory).
+
+### Changed
+- Updated dependencies (React 19.2.7, marked 18, Tauri 2.11.3) and consolidated CI into a single workflow with grouped Dependabot updates.
+
 ## [2.1.3]
 
 ### Fixed

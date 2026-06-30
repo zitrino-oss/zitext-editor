@@ -6255,7 +6255,7 @@ dependencies = [
 
 [[package]]
 name = "zitext-editor"
-version = "2.1.3"
+version = "2.1.4"
 dependencies = [
  "criterion",
  "dirs 5.0.1",
