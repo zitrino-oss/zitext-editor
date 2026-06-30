@@ -18,6 +18,11 @@ env:
   INPUT_VERSION: ${{ github.event.inputs.version }}
   REF_NAME: ${{ github.ref_name }}
 
+# Least privilege: distribution is via Cloudflare R2 (rclone + R2 secrets), not
+# GitHub Releases, so no write access to the repo is needed.
+permissions:
+  contents: read
+
 jobs:
   # ── Pre-flight audit ────────────────────────────────────────────────
   audit:

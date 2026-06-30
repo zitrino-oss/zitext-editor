@@ -19,7 +19,7 @@ let currentSessionId: string | null = null;
 let errorCounter = 0;
 
 export function startSession(): void {
-    currentSessionId = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    currentSessionId = `sess_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     const record: SessionRecord = {
         id: currentSessionId,
         start: Date.now(),

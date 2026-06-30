@@ -8,6 +8,10 @@ on:
   # them on demand against a branch.
   workflow_dispatch:
 
+# Least privilege: benchmarks only read the repo.
+permissions:
+  contents: read
+
 jobs:
   rust-benchmarks:
     name: Rust Benchmarks
