@@ -18,8 +18,9 @@ env:
   INPUT_VERSION: ${{ github.event.inputs.version }}
   REF_NAME: ${{ github.ref_name }}
 
-# Least privilege: distribution is via Cloudflare R2 (rclone + R2 secrets), not
-# GitHub Releases, so no write access to the repo is needed.
+# Least privilege by default: builds and R2 distribution need no repo write
+# access. Only the publish-github-release job elevates to contents: write (job
+# scoped) to attach installers to the GitHub Release.
 permissions:
   contents: read
 
@@ -654,3 +655,69 @@ jobs:
 
           rclone copy latest.json "r2:$R2_BUCKET_NAME/" -v
           echo "✅ Published latest.json for v$VERSION"
+
+  # ── Publish GitHub Release ────────────────────────────────────────────
+  # Attaches the already-built installers (+ checksums) to a GitHub Release so
+  # GitHub and Cloudflare R2 stay in sync automatically on every tag. Runs ONLY
+  # for real tag pushes (v*) — a manual workflow_dispatch has no tag to attach
+  # to. The tag already exists (it triggered this run), so no tag is created
+  # here and tag-protection rules are not involved.
+  publish-github-release:
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+
+      - name: Assemble release assets
+        run: |
+          mkdir -p release
+          # Flatten every built installer + checksum out of the per-job artifact dirs.
+          find dist -type f -name 'ZITEXT-*' -exec cp {} release/ \;
+          echo "Release assets:"; ls -la release
+
+      - name: Extract changelog notes
+        run: |
+          VERSION="${REF_NAME#v}"
+          # Validate strict semver before use (defence in depth).
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid version: $VERSION" >&2; exit 1
+          fi
+          # Pull this version's section from CHANGELOG.md using a LITERAL string
+          # match (no regex built from input) — from "## [VERSION]" to the next "## [".
+          awk -v ver="## [$VERSION]" '
+            index($0, ver) == 1 { grab = 1; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > notes.md || true
+          if [ ! -s notes.md ]; then
+            echo "See the full changelog: https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md" > notes.md
+          fi
+          {
+            echo ""
+            echo "---"
+            echo "Also available at [zitext.com/downloads](https://zitext.com/downloads.html)."
+          } >> notes.md
+          cat notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${REF_NAME#v}"
+          if gh release view "$REF_NAME" >/dev/null 2>&1; then
+            # Re-run / already exists: refresh assets and notes idempotently.
+            gh release upload "$REF_NAME" release/* --clobber
+            gh release edit "$REF_NAME" --title "ZITEXT $VERSION" --notes-file notes.md --latest
+          else
+            gh release create "$REF_NAME" --title "ZITEXT $VERSION" --notes-file notes.md --latest release/*
+          fi
+          echo "✅ Published GitHub Release $REF_NAME"
