@@ -31,12 +31,17 @@ export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: F
     const [searchError, setSearchError] = useState<string | null>(null);
     const [totalMatches, setTotalMatches] = useState(0);
     const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
+    // The query an actual search was last run for. Distinct from `query` (the live
+    // input) so "No results found" only appears after a search has run — not on every
+    // keystroke before the user presses Enter / clicks Search.
+    const [searchedQuery, setSearchedQuery] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
     const runSearch = useCallback(async (q: string, cs: boolean, ww: boolean) => {
         if (!folderPath || !q.trim()) {
             setResults([]);
             setTotalMatches(0);
+            setSearchedQuery('');
             return;
         }
 
@@ -67,10 +72,12 @@ export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: F
 
             setResults(groupedResults);
             setTotalMatches(matches.length);
+            setSearchedQuery(q);
         } catch (err) {
             setSearchError((err as Error).message || String(err));
             setResults([]);
             setTotalMatches(0);
+            setSearchedQuery(q);
         } finally {
             setIsSearching(false);
         }
@@ -200,8 +207,8 @@ export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: F
                 </div>
             )}
 
-            {results.length === 0 && query && !isSearching && !searchError && (
-                <div className="find-in-files-no-results">No results found for "{query}"</div>
+            {results.length === 0 && searchedQuery && !isSearching && !searchError && (
+                <div className="find-in-files-no-results">No results found for "{searchedQuery}"</div>
             )}
 
             <div className="find-in-files-results">

@@ -73,8 +73,12 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
 
             // Priority 1: Restore session (parallel with concurrency limit)
             if (session.length > 0) {
-                // Restore untitled files synchronously (no disk I/O)
-                const untitled = session.filter(f => f.is_untitled && f.content !== undefined);
+                // Restore untitled files synchronously (no disk I/O). Skip empty
+                // ones — a blank untitled tab has nothing to recover, and older
+                // sessions may still carry blanks saved before they were filtered.
+                const untitled = session.filter(
+                    f => f.is_untitled && f.content !== undefined && f.content.trim().length > 0
+                );
                 for (const file of untitled) {
                     const tabId = tabManager.createNewTab();
                     tabManager.updateTab(tabId, {
@@ -152,6 +156,13 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
             }
             if (desiredTabId) {
                 tabManager.setActiveTabId(desiredTabId);
+            }
+
+            // If the session/startup restore produced no tabs at all (e.g. it held
+            // only empty untitled tabs, which are now filtered out), fall back to a
+            // single fresh untitled tab so the window is never left blank.
+            if (pathToTabId.size === 0) {
+                tabManager.createNewTab();
             }
         } else {
             // Only create a new untitled tab if no session exists AND no startup scripts

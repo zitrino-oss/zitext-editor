@@ -340,6 +340,9 @@ export function EditorPanel({
             },
         });
 
+        // The built-in Copy/Cut/Paste that these actions replace are removed from the
+        // editor context menu in monaco-config.ts, so only these WebView2-safe ones show.
+
         editor.focus();
     }, [cursorLine, cursorColumn, onCursorChange, onSelectionChange, onFocus, onEditorReady]);
 

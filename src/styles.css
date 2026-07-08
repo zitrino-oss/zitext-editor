@@ -1840,6 +1840,9 @@ body {
 }
 
 .find-in-files-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-color);
   background-color: var(--bg-tertiary);
@@ -2575,6 +2578,15 @@ body {
   border-radius: 8px;
   background: var(--bg-secondary);
   margin: 8px 0;
+}
+
+/* Linux/WebKitGTK only: the subtle background-only cards render flat there
+   (their drop shadow doesn't show), so the Settings boxes on the Advanced,
+   Files, and Privacy tabs looked undefined. Give them an explicit border and
+   a soft shadow to restore the card look. Windows/macOS are unchanged. */
+:root[data-platform="linux"] .s-info-block {
+  border: 1px solid var(--border-color);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), 0 4px 10px rgba(0, 0, 0, 0.10);
 }
 .s-info-block p {
   margin: 0;
