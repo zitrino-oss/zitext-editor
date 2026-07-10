@@ -38,21 +38,22 @@ export default defineConfig(async () => ({
   build: {
     // Increase chunk size warning limit for Monaco (it's a large library)
     chunkSizeWarningLimit: 1500,
-    // Strip console.log/debug calls from production builds
-    minify: 'esbuild',
     rollupOptions: {
       output: {
-        // Ensure Monaco workers are properly chunked
-        manualChunks: {
-          monaco: ['@monaco-editor/react', 'monaco-editor'],
-        },
+        // Ensure Monaco workers are properly chunked. Rolldown (Vite 8) only
+        // accepts the function form of manualChunks.
+        manualChunks: (id) =>
+          id.includes('monaco-editor') || id.includes('@monaco-editor/react')
+            ? 'monaco'
+            : undefined,
       },
     },
   },
-  esbuild: {
-    // Remove console.log and console.debug in production
-    drop: process.env.NODE_ENV === 'production' ? ['console', 'debugger'] : [],
-  },
+  // NOTE: The former `esbuild.drop` that stripped console.*/debugger from
+  // production builds was removed in the Vite 8 upgrade. Vite 8 minifies with
+  // Oxc and no longer honors that option, and no equivalent is currently
+  // exposed through Vite's config. Revisit once Oxc/Rolldown surface a
+  // console-drop option in Vite.
 
   worker: {
     format: 'es',
