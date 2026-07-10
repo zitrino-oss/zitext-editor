@@ -126,7 +126,8 @@ const byteLength = (s: string): number => new TextEncoder().encode(s).length;
 
 export async function saveSession(tabs: Tab[], activeTabId: string | null): Promise<void> {
     try {
-        const session: SessionFile[] = tabs.map(tab => {
+        const session: SessionFile[] = [];
+        for (const tab of tabs) {
             if (tab.path !== null) {
                 const base: SessionFile = {
                     path: tab.path,
@@ -140,13 +141,19 @@ export async function saveSession(tabs: Tab[], activeTabId: string | null): Prom
                 // next manual save doesn't lose them. Non-dirty files just
                 // re-read from disk on restore (no content stored).
                 if (tab.isDirty && byteLength(tab.content) <= MAX_DIRTY_DISK_CONTENT_BYTES) {
-                    return { ...base, is_dirty: true, content: tab.content };
+                    session.push({ ...base, is_dirty: true, content: tab.content });
+                } else {
+                    session.push(base);
                 }
-                return base;
+                continue;
             }
-            // Untitled file — preserve content so it survives crashes/restarts
+            // Untitled file — skip empty scratch tabs. They hold nothing worth
+            // recovering and, if persisted, reappear (and accumulate) as blank
+            // untitled tabs on every launch. Only preserve untitled tabs that
+            // actually contain unsaved content so crash-recovery still works.
+            if (tab.content.trim().length === 0) continue;
             const content = byteLength(tab.content) <= MAX_UNTITLED_CONTENT_BYTES ? tab.content : undefined;
-            return {
+            session.push({
                 path: tab.title,
                 cursor_line: tab.cursorLine,
                 cursor_column: tab.cursorColumn,
@@ -155,8 +162,8 @@ export async function saveSession(tabs: Tab[], activeTabId: string | null): Prom
                 is_untitled: true,
                 is_active: tab.id === activeTabId,
                 content,
-            };
-        });
+            });
+        }
 
         await invoke('save_session', {
             session, activeTabPath:

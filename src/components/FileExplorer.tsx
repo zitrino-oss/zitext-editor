@@ -187,7 +187,8 @@ export function FileExplorer({
                     <input
                         type="text"
                         className="file-explorer-search-input"
-                        placeholder="Filter files..."
+                        placeholder="Filter by file name…"
+                        title="Filters the tree by file name. To search text inside files, use Find in Files (Ctrl/Cmd+Shift+F)."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                     />
@@ -227,7 +228,11 @@ export function FileExplorer({
                             </div>
                         </div>
                         {visibleTree.length === 0 && searchQuery && (
-                            <div className="file-explorer-no-results">No files match "{searchQuery}"</div>
+                            <div className="file-explorer-no-results">
+                                No file names match "{searchQuery}".
+                                <br />
+                                To search text inside files, use Find in Files (Ctrl/Cmd+Shift+F).
+                            </div>
                         )}
                         {visibleTree.map(node => (
                             <FileTreeNode

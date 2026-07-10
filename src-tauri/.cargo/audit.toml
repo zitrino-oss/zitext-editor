@@ -3,4 +3,14 @@
 # This is a transitive dependency via: rand → phf_generator → markup5ever →
 # html5ever → tauri-utils → tauri. Cannot be fixed by direct dep update;
 # awaiting upstream Tauri to bump their dependency on rand.
-ignore = ["RUSTSEC-2026-0097"]
+#
+# RUSTSEC-2026-0194 / RUSTSEC-2026-0195: quick-xml < 0.41 XML-parsing DoS
+# advisories (quadratic duplicate-attribute check; unbounded namespace-decl
+# allocation). The runtime path (plist → tauri-utils) is already upgraded to
+# quick-xml 0.41.0. The only remaining vulnerable copy is quick-xml 0.39.4,
+# pulled in exclusively by wayland-scanner (Linux-only) at BUILD time to
+# generate code from first-party Wayland protocol XML — it never parses
+# untrusted runtime input, so the DoS vectors do not apply. wayland-scanner
+# pins `quick-xml = "^0.39"` and cannot take 0.41 until upstream updates.
+# Remove these two once wayland-scanner bumps its quick-xml requirement.
+ignore = ["RUSTSEC-2026-0097", "RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]

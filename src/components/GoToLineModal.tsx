@@ -46,7 +46,11 @@ export function GoToLineModal({ isOpen, onClose, onGoToLine, maxLine }: GoToLine
                     <h3>Go to Line</h3>
                     <button className="modal-close" onClick={onClose}>×</button>
                 </div>
-                <form onSubmit={handleSubmit}>
+                {/* noValidate: rely on handleSubmit's JS range check + in-app warning
+                    toast instead of native HTML5 constraint validation. WebKitGTK
+                    (Linux) renders the native validation bubble empty, and it also
+                    blocks submit so our own message never showed. */}
+                <form noValidate onSubmit={handleSubmit}>
                     <div className="modal-body">
                         <input
                             ref={inputRef}

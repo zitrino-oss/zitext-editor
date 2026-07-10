@@ -1572,8 +1572,16 @@ fn search_dir_recursive(
         // Specific large/binary dot-directories (.git, .venv, …) are excluded below.
 
         if path.is_dir() {
-            // Skip well-known large or binary directories (source artifacts, VCS data, etc.)
-            if matches!(name, "node_modules" | "target" | "dist" | "build" | ".git" | "__pycache__" | ".venv" | "vendor") {
+            // Skip well-known large or generated directories (build output, caches, VCS
+            // data, etc.). These hold machine-generated files that would otherwise flood
+            // results and exhaust the match cap / visit budget before real source files
+            // are reached — e.g. a Next.js `.next` folder buried product-icons.tsx entirely.
+            if matches!(
+                name,
+                "node_modules" | "target" | "dist" | "build" | ".git" | "__pycache__" | ".venv" | "vendor"
+                    | ".next" | ".nuxt" | ".svelte-kit" | ".turbo" | ".angular" | ".vite"
+                    | ".parcel-cache" | ".cache" | ".output" | "coverage"
+            ) {
                 continue;
             }
             search_dir_recursive(&path, query, case_sensitive, whole_word, results, max_results, depth + 1, budget);
