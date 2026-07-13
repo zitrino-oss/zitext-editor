@@ -146,6 +146,13 @@ export function EditorPanel({
     // collapsing the selection and making it impossible to select more than a line or two.
     const isDraggingRef = useRef(false);
 
+    // The last cursor position the editor itself emitted via onDidChangeCursorPosition.
+    // Because cursorLine/cursorColumn are fed straight back from that callback, every
+    // keystroke round-trips through props into the cursor-sync effect below. Comparing
+    // incoming props against this ref lets us ignore those echoes and only re-position
+    // Monaco for genuinely external changes (Go To Line, session restore).
+    const lastEmittedPosRef = useRef<{ line: number; column: number } | null>(null);
+
     // Force-tokenize all lines after language changes or on initial mount.
     // Monaco's background tokenizer processes lines lazily in small batches to stay
     // responsive; on larger files this leaves some lines un-highlighted until scrolled.
@@ -229,12 +236,17 @@ export function EditorPanel({
 
     useEffect(() => {
         if (!editorRef.current) return;
-        // If this prop update is just the editor's own position echoed back through
-        // state, skip it — calling setPosition() here would collapse the user's
         // Never call setPosition() while the mouse is held in the editor.
         // The state/prop round-trip lags behind Monaco's actual position during a
         // drag-select, so a stale prop would collapse the in-progress selection.
         if (isDraggingRef.current) return;
+        // Skip echoes of the editor's own cursor movements. Typing fires
+        // onDidChangeCursorPosition, which flows back here as new props one render
+        // later; re-applying that value with setPosition() is what yanked the caret
+        // away from where the user was typing. The props only differ from the last
+        // emitted position for genuinely external changes (Go To Line, restore).
+        const last = lastEmittedPosRef.current;
+        if (last && last.line === cursorLine && last.column === cursorColumn) return;
         const pos = editorRef.current.getPosition();
         if (pos && pos.lineNumber === cursorLine && pos.column === cursorColumn) return;
         editorRef.current.setPosition({ lineNumber: cursorLine, column: cursorColumn });
@@ -262,6 +274,9 @@ export function EditorPanel({
         editor.setPosition({ lineNumber: cursorLine, column: cursorColumn });
 
         editor.onDidChangeCursorPosition((e) => {
+            // Remember what we emit so the cursor-sync effect can tell this echo
+            // apart from an external position change (see lastEmittedPosRef).
+            lastEmittedPosRef.current = { line: e.position.lineNumber, column: e.position.column };
             onCursorChange(e.position.lineNumber, e.position.column);
         });
 
@@ -372,6 +387,11 @@ export function EditorPanel({
                     scrollBeyondLastLine: false,
                     automaticLayout: true,
                     renderLineHighlight: 'all',
+                    // Don't box the word under the cursor or auto-highlight text
+                    // matching the current selection — users found the word-box
+                    // distracting while typing.
+                    occurrencesHighlight: 'off',
+                    selectionHighlight: false,
                     cursorBlinking: 'smooth',
                     smoothScrolling: true,
                     contextmenu: true,

@@ -2529,9 +2529,18 @@ body {
   transform: translateX(16px);
 }
 
-/* Select */
-.s-select {
-  padding: 6px 28px 6px 10px;
+/* Custom dropdown (replaces the native <select> so its list can't overlap the footer) */
+.s-dropdown {
+  position: relative;
+}
+.s-dropdown-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 140px;
+  max-width: 200px;
+  padding: 6px 10px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: var(--bg-primary);
@@ -2539,18 +2548,64 @@ body {
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
-  min-width: 140px;
-  max-width: 200px;
-  transition: border-color 0.15s;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.s-select:focus {
+.s-dropdown-trigger::after {
+  content: "";
+  flex-shrink: 0;
+  width: 10px;
+  height: 6px;
+  background: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center;
+  transition: transform 0.15s ease;
+}
+.s-dropdown-trigger:hover {
+  border-color: color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
+}
+.s-dropdown-trigger.open,
+.s-dropdown-trigger:focus-visible {
   outline: none;
   border-color: var(--accent-color);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 20%, transparent);
+}
+.s-dropdown-trigger.open::after {
+  transform: rotate(180deg);
+}
+.s-dropdown-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.s-dropdown-menu {
+  z-index: 50;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  animation: s-dropdown-in 0.12s ease-out;
+}
+@keyframes s-dropdown-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.s-dropdown-option {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.s-dropdown-option:hover {
+  background: var(--bg-tertiary);
+}
+.s-dropdown-option.selected {
+  background: var(--accent-color);
+  color: #fff;
 }
 
 /* Number input */

@@ -1968,11 +1968,10 @@ pub fn run() {
             // it. We also use create_new + O_NOFOLLOW so an existing entry at
             // the chosen path causes failure rather than a symlink follow.
             if wait_mode && !startup_files.is_empty() {
-                use rand::RngCore;
                 let locks = WAIT_LOCKS.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
                 if let Ok(mut map) = locks.lock() {
                     for file_path in &startup_files {
-                        let nonce = rand::thread_rng().next_u64();
+                        let nonce: u64 = rand::random();
                         let sanitized = file_path.replace(['/', '\\', ':'], "_");
                         let lock_path = std::env::temp_dir()
                             .join(format!("zitext-wait-{}-{:016x}.lock", sanitized, nonce));
