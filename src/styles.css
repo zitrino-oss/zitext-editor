@@ -707,12 +707,15 @@ body {
   accent-color: var(--accent-color);
 }
 
+/* Margins instead of flex gap — see .modal-actions note. */
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 16px;
-  padding: 24px 36px 32px;
+  padding: 16px 28px 24px;
   background: transparent;
+}
+.modal-footer .modal-button {
+  margin: 8px;
 }
 
 
@@ -2377,7 +2380,12 @@ body {
   display: flex;
   width: 640px;
   max-width: 92vw;
-  height: 520px;
+  /* Auto height so every tab shows all its rows without scrolling
+     (QA: fixed 520px clipped the Editor tab). min-height keeps the short
+     tabs from collapsing; max-height still guards tiny windows, where
+     .s-content-scroll's overflow-y takes over. */
+  height: auto;
+  min-height: 520px;
   max-height: 85vh;
   border-radius: 14px;
   overflow: hidden;
@@ -3548,12 +3556,18 @@ body {
   margin: 8px 0 0;
   opacity: 0.7;
 }
+/* Button spacing uses margins, not flex gap: older WebKitGTK/WebKit builds
+   ignore gap in flex layouts, which rendered the quit-dialog buttons fused
+   together. Margins (6px per side = 12px between) work on every engine.
+   Padding is reduced by 6px to keep the cluster's outer spacing unchanged. */
 .modal-actions {
-  padding: 0 36px 28px;
+  padding: 0 30px 22px;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
   justify-content: center;
+}
+.modal-actions .modal-btn {
+  margin: 6px;
 }
 .modal-btn {
   padding: 8px 28px;
