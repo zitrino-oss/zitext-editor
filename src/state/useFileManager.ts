@@ -1,4 +1,5 @@
 import { useCallback, useRef, useEffect } from 'react';
+import { ask } from '@tauri-apps/plugin-dialog';
 import type { Tab } from '../types';
 import { errorService } from '../services/ErrorService';
 import {
@@ -12,7 +13,7 @@ import {
 } from '../utils/fileOperations';
 import { detectLanguage } from '../utils/languageDetection';
 import { fileWatcher } from '../utils/fileWatcher';
-import { LARGE_FILE_WARNING_BYTES, BYTES_PER_MB } from '../constants';
+import { LARGE_FILE_WARNING_BYTES, BYTES_PER_MB, MAX_FILE_SIZE_BYTES } from '../constants';
 import { startTimer, endTimer } from '../utils/perfMetrics';
 
 /** Rejects saving a file whose chosen name is still the default "Untitled"
@@ -88,16 +89,23 @@ export function useFileManager(
             startTimer('file-open');
             const result = await readFileContent(path);
 
-            // Warn for large files
+            // Warn for large files (between the 1 MB warning threshold and the
+            // 10 MB hard limit; files above the limit are rejected by the backend
+            // before we ever get here).
             if (result.size > LARGE_FILE_WARNING_BYTES) {
                 const sizeMB = (result.size / BYTES_PER_MB).toFixed(1);
+                const warnMB = (LARGE_FILE_WARNING_BYTES / BYTES_PER_MB).toFixed(0);
+                const maxMB = (MAX_FILE_SIZE_BYTES / BYTES_PER_MB).toFixed(0);
                 const fileName = path.split(/[/\\]/).pop();
-                const proceed = confirm(
-                    `⚠️ Large File Warning\n\n` +
+                // Native Tauri dialog rather than window.confirm(), which does not
+                // render reliably in a Tauri production webview.
+                const proceed = await ask(
                     `File: ${fileName}\n` +
-                    `Size: ${sizeMB} MB\n\n` +
-                    `Opening large files may impact performance.\n\n` +
-                    `Do you want to continue?`
+                    `Size: ${sizeMB} MB (larger than the ${warnMB} MB recommended limit)\n\n` +
+                    `Files over ${warnMB} MB may open slowly and affect editor performance. ` +
+                    `The maximum file size ZITEXT can open is ${maxMB} MB.\n\n` +
+                    `Do you want to open it anyway?`,
+                    { title: 'Large File Warning', kind: 'warning', okLabel: 'Open', cancelLabel: 'Cancel' }
                 );
                 if (!proceed) return null;
             }

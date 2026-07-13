@@ -114,13 +114,19 @@ function Dropdown({ value, options, onChange, ariaLabel }: {
         const onDown = (e: MouseEvent) => {
             if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
         };
+        // Close when the page behind scrolls (the fixed-position menu would detach),
+        // but ignore scrolls originating inside the menu so it stays open and scrollable.
+        const onScroll = (e: Event) => {
+            if (rootRef.current && rootRef.current.contains(e.target as Node)) return;
+            setOpen(false);
+        };
         window.addEventListener('resize', close);
-        window.addEventListener('scroll', close, true);
+        window.addEventListener('scroll', onScroll, true);
         document.addEventListener('keydown', onKey, true);
         document.addEventListener('mousedown', onDown);
         return () => {
             window.removeEventListener('resize', close);
-            window.removeEventListener('scroll', close, true);
+            window.removeEventListener('scroll', onScroll, true);
             document.removeEventListener('keydown', onKey, true);
             document.removeEventListener('mousedown', onDown);
         };

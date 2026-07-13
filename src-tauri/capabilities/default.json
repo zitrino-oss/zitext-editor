@@ -8,6 +8,7 @@
     "core:window:allow-set-title",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
+    "dialog:allow-ask",
     {
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "https://zitext.com/*" }]

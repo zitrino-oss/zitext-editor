@@ -210,13 +210,14 @@ function App() {
     }, []);
 
     // Autosave: save all dirty tabs with saved paths
-    useAutosave({
+    const { notifyChange: notifyAutosaveChange } = useAutosave({
         mode: settings.autosave,
         delay: settings.autosaveDelay,
         // Must match the save-loop predicate below exactly. Keying on `t.path`
         // (not `!t.isUntitled`) avoids a no-op autosave loop for the edge case
         // of a dirty tab that is not "untitled" yet still has no path.
         isDirty: tabs.some(t => t.isDirty && !!t.path),
+        activeTabId,
         onSave: async () => {
             for (const tab of tabs) {
                 if (tab.isDirty && tab.path) {
@@ -225,6 +226,14 @@ function App() {
             }
         },
     });
+
+    // Feed edits into the autosave debounce (After Delay mode). Wrapping
+    // updateTabContent keeps every content-change path — typing, paste, and the
+    // JSON/XML/YAML tools — resetting the same timer.
+    const updateTabContentAndAutosave = useCallback((tabId: string, content: string) => {
+        updateTabContent(tabId, content);
+        notifyAutosaveChange();
+    }, [updateTabContent, notifyAutosaveChange]);
 
     useEffect(() => {
         loadRecentFiles();
@@ -702,13 +711,13 @@ function App() {
         { id: 'keybindings',     label: 'Keyboard Shortcuts', description: 'Edit keyboard shortcuts',         category: 'Settings', action: () => setKeybindingEditorOpen(true) },
         { id: 'diagnostics',    label: 'Show Diagnostics',   description: 'Session health and performance',  category: 'Help',     action: () => setShowDiagnostics(true) },
         // Data tools
-        { id: 'json-format',     label: 'Format JSON',        description: 'Pretty-print JSON',               category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContent(focusedTab.id, formatJson(focusedTab.content)); errorService.showSuccess('JSON formatted'); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
-        { id: 'json-minify',     label: 'Minify JSON',        description: 'Remove whitespace from JSON',     category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContent(focusedTab.id, minifyJson(focusedTab.content)); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
+        { id: 'json-format',     label: 'Format JSON',        description: 'Pretty-print JSON',               category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContentAndAutosave(focusedTab.id, formatJson(focusedTab.content)); errorService.showSuccess('JSON formatted'); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
+        { id: 'json-minify',     label: 'Minify JSON',        description: 'Remove whitespace from JSON',     category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContentAndAutosave(focusedTab.id, minifyJson(focusedTab.content)); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
         { id: 'json-validate',   label: 'Validate JSON',      description: 'Check if JSON is valid',          category: 'JSON',    action: () => { if (!focusedTab) return; const r = validateJson(focusedTab.content); if (r.valid) { errorService.showSuccess('Valid JSON'); } else { errorService.showError(r.line ? `Invalid JSON at line ${r.line}: ${r.error}` : `Invalid JSON: ${r.error}`); } } },
-        { id: 'json-sort-keys',  label: 'Sort JSON Keys',     description: 'Sort object keys alphabetically', category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContent(focusedTab.id, sortJsonKeys(focusedTab.content)); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
-        { id: 'xml-format',      label: 'Format XML',         description: 'Format XML with indentation',     category: 'XML',     action: () => { if (!focusedTab) return; try { updateTabContent(focusedTab.id, formatXml(focusedTab.content)); } catch (e) { errorService.showError('Invalid XML', e as Error); } } },
+        { id: 'json-sort-keys',  label: 'Sort JSON Keys',     description: 'Sort object keys alphabetically', category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContentAndAutosave(focusedTab.id, sortJsonKeys(focusedTab.content)); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
+        { id: 'xml-format',      label: 'Format XML',         description: 'Format XML with indentation',     category: 'XML',     action: () => { if (!focusedTab) return; try { updateTabContentAndAutosave(focusedTab.id, formatXml(focusedTab.content)); } catch (e) { errorService.showError('Invalid XML', e as Error); } } },
         { id: 'xml-validate',    label: 'Validate XML',       description: 'Check if XML is valid',           category: 'XML',     action: () => { if (!focusedTab) return; const r = validateXml(focusedTab.content); if (r.valid) { errorService.showSuccess('Valid XML'); } else { errorService.showError(`Invalid XML: ${r.error}`); } } },
-        { id: 'yaml-format',     label: 'Format YAML',        description: 'Format YAML with indentation',    category: 'YAML',    action: () => { if (!focusedTab) return; try { updateTabContent(focusedTab.id, formatYaml(focusedTab.content)); } catch (e) { errorService.showError('Invalid YAML', e as Error); } } },
+        { id: 'yaml-format',     label: 'Format YAML',        description: 'Format YAML with indentation',    category: 'YAML',    action: () => { if (!focusedTab) return; try { updateTabContentAndAutosave(focusedTab.id, formatYaml(focusedTab.content)); } catch (e) { errorService.showError('Invalid YAML', e as Error); } } },
     ];
 
     if (isLoading) {
@@ -853,8 +862,8 @@ function App() {
                                     settings={{ ...settings, editorTheme: effectiveEditorTheme }}
                                     findKeybinding={settings.keybindings['find']}
                                     replaceKeybinding={settings.keybindings['replace']}
-                                    onLeftChange={(content) => updateTabContent(activeTab.id, content)}
-                                    onRightChange={(content) => { if (rightPaneTabId) updateTabContent(rightPaneTabId, content); }}
+                                    onLeftChange={(content) => updateTabContentAndAutosave(activeTab.id, content)}
+                                    onRightChange={(content) => { if (rightPaneTabId) updateTabContentAndAutosave(rightPaneTabId, content); }}
                                     onLeftCursorChange={(line, col) => updateCursorPosition(activeTab.id, line, col)}
                                     onRightCursorChange={(line, col) => { if (rightPaneTabId) updateCursorPosition(rightPaneTabId, line, col); }}
                                     onLeftSelectionChange={(len) => { if (activePaneRef.current === 'left') setSelectionLength(len); }}
@@ -883,7 +892,7 @@ function App() {
                                     cursorColumn={activeTab.cursorColumn}
                                     findKeybinding={settings.keybindings['find']}
                                     replaceKeybinding={settings.keybindings['replace']}
-                                    onChange={(content) => updateTabContent(activeTab.id, content)}
+                                    onChange={(content) => updateTabContentAndAutosave(activeTab.id, content)}
                                     onCursorChange={(line, col) => updateCursorPosition(activeTab.id, line, col)}
                                     onSelectionChange={setSelectionLength}
                                     onEditorReady={setLeftEditorInstance}

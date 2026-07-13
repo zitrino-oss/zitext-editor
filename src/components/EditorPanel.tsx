@@ -118,6 +118,7 @@ export function EditorPanel({
     wordWrap,
     showMinimap,
     isReadOnly,
+    enableColumnSelection,
     tabSize,
     insertSpaces,
     cursorLine,
@@ -174,31 +175,42 @@ export function EditorPanel({
     }, [isEditorReady, language]);
 
     // Wire up the drag-detection listeners once the editor DOM node is available.
-    // Also toggles columnSelection based on Alt key so Alt+drag = column select,
-    // normal drag = normal selection.
+    // When the Column Selection setting is on, holding Alt flips Monaco into
+    // columnSelection mode so an Alt(+Shift)+drag makes a rectangular block
+    // selection; releasing Alt restores normal selection. When the setting is
+    // off, the Alt listeners are not attached and columnSelection stays false,
+    // so the toggle actually controls the behavior.
     useEffect(() => {
         if (!isEditorReady || !editorRef.current) return;
         const domNode = editorRef.current.getDomNode();
         if (!domNode) return;
         const onMouseDown = () => { isDraggingRef.current = true; };
         const onMouseUp   = () => { isDraggingRef.current = false; };
+        domNode.addEventListener('mousedown', onMouseDown);
+        window.addEventListener('mouseup', onMouseUp);   // global — catches release anywhere
+
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Alt') editorRef.current?.updateOptions({ columnSelection: true });
         };
         const onKeyUp = (e: KeyboardEvent) => {
             if (e.key === 'Alt') editorRef.current?.updateOptions({ columnSelection: false });
         };
-        domNode.addEventListener('mousedown', onMouseDown);
-        window.addEventListener('mouseup', onMouseUp);   // global — catches release anywhere
-        window.addEventListener('keydown', onKeyDown);
-        window.addEventListener('keyup', onKeyUp);
+        if (enableColumnSelection) {
+            window.addEventListener('keydown', onKeyDown);
+            window.addEventListener('keyup', onKeyUp);
+        } else {
+            // Ensure a stale "Alt was held" state can't leave column mode stuck on
+            // after the user turns the setting off.
+            editorRef.current.updateOptions({ columnSelection: false });
+        }
+
         return () => {
             domNode.removeEventListener('mousedown', onMouseDown);
             window.removeEventListener('mouseup', onMouseUp);
             window.removeEventListener('keydown', onKeyDown);
             window.removeEventListener('keyup', onKeyUp);
         };
-    }, [isEditorReady]);
+    }, [isEditorReady, enableColumnSelection]);
 
     useEffect(() => {
         if (!isEditorReady || !editorRef.current || !monacoRef.current) return;
@@ -232,6 +244,12 @@ export function EditorPanel({
             window.dispatchEvent(new CustomEvent('zitext-replace'));
         });
         activeReplaceKeyRef.current = newReplaceKey;
+
+        // Suppress Monaco's built-in "Go to Line" widget (editor.action.gotoLine,
+        // bound to Ctrl/Cmd+G). The app's global keydown handler already opens our
+        // custom GoToLineModal on this chord; without this no-op override both the
+        // native widget and the modal appear at once.
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyG, () => { /* no-op */ });
     }, [isEditorReady, findKeybinding, replaceKeybinding]);
 
     useEffect(() => {
