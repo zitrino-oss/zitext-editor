@@ -18,9 +18,7 @@ const FONT_FAMILIES = [
     { value: '"Source Code Pro", "Menlo", "Monaco", "Consolas", monospace', label: 'Source Code Pro' },
     { value: '"Ubuntu Mono", "Courier New", Courier, monospace', label: 'Ubuntu Mono' },
     { value: '"Roboto Mono", "Courier New", Courier, monospace', label: 'Roboto Mono' },
-    { value: '"Inconsolata", "Courier New", Courier, monospace', label: 'Inconsolata' },
     { value: '"Space Mono", "Courier New", Courier, monospace', label: 'Space Mono' },
-    { value: '"Anonymous Pro", "Courier New", Courier, monospace', label: 'Anonymous Pro' },
     { value: '"Courier Prime", "Courier New", Courier, monospace', label: 'Courier Prime' },
     { value: 'monospace', label: 'System Monospace' },
 ];

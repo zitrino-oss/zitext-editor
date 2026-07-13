@@ -87,6 +87,12 @@ export function useSettingsManager() {
             if (merged.editorTheme === 'vs-light') {
                 merged.editorTheme = merged.theme === 'dark' ? 'vs-dark' : 'vs';
             }
+            // Migrate removed fonts: Anonymous Pro and Inconsolata were dropped
+            // from FONT_FAMILIES and fonts.css. A stale saved stack would silently
+            // render its Courier New fallback while the Settings dropdown shows blank.
+            if (/Anonymous Pro|Inconsolata/.test(merged.fontFamily)) {
+                merged.fontFamily = DEFAULT_SETTINGS.fontFamily;
+            }
             // Force agreement between app theme and editor theme so a stale
             // settings file can't leave us with dark chrome + light editor.
             const corrected = syncEditorThemeToAppTheme(merged);
