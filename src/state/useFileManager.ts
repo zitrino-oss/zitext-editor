@@ -1,6 +1,7 @@
 import { useCallback, useRef, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
-import type { Tab } from '../types';
+import type { DiskVersion, Tab } from '../types';
 import { errorService } from '../services/ErrorService';
 import {
     readFileContent,
@@ -10,11 +11,14 @@ import {
     addRecentFile,
     rebuildNativeMenu,
     detectEOL,
+    type FileWriteResult,
 } from '../utils/fileOperations';
 import { detectLanguage } from '../utils/languageDetection';
 import { fileWatcher } from '../utils/fileWatcher';
 import { LARGE_FILE_WARNING_BYTES, BYTES_PER_MB, MAX_FILE_SIZE_BYTES } from '../constants';
 import { startTimer, endTimer } from '../utils/perfMetrics';
+import { KeyedTaskQueue } from '../utils/keyedTaskQueue';
+import type { TabSaveSnapshot } from './useTabManager';
 
 /** Rejects saving a file whose chosen name is still the default "Untitled"
  *  form (e.g. "Untitled", "Untitled-3.txt"). Shared by Save and Save As. */
@@ -22,6 +26,45 @@ function isUntitledFileName(savePath: string): boolean {
     const fileName = savePath.split(/[/\\]/).pop() || '';
     const fileNameWithoutExt = fileName.replace(/\.[^.]+$/, '');
     return /^untitled(-\d+)?$/i.test(fileNameWithoutExt);
+}
+
+async function writeWithConflictConfirmation(
+    path: string,
+    content: string,
+    encoding: string,
+    expectedVersion: DiskVersion | null,
+): Promise<FileWriteResult | null> {
+    try {
+        return await writeFileContent(path, content, encoding, expectedVersion);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('ZITEXT_ENCODING_UNREPRESENTABLE:')) {
+            const saveAsUtf8 = await ask(
+                'This document contains characters that Windows-1252 cannot represent. Save it as UTF-8 instead?',
+                {
+                    title: 'Change Encoding?',
+                    kind: 'warning',
+                    okLabel: 'Save as UTF-8',
+                    cancelLabel: 'Cancel',
+                },
+            );
+            if (!saveAsUtf8) return null;
+            return writeWithConflictConfirmation(path, content, 'UTF-8', expectedVersion);
+        }
+        if (!message.includes('ZITEXT_FILE_CONFLICT:')) throw error;
+        const overwrite = await ask(
+            `"${path.split(/[/\\]/).pop() || path}" changed on disk or was removed after it was opened.\n\n` +
+            'Overwrite the external version with your current editor content?',
+            {
+                title: 'File Changed on Disk',
+                kind: 'warning',
+                okLabel: 'Overwrite',
+                cancelLabel: 'Cancel',
+            },
+        );
+        if (!overwrite) return null;
+        return writeWithConflictConfirmation(path, content, encoding, null);
+    }
 }
 
 /**
@@ -34,12 +77,17 @@ export function useFileManager(
     tabs: Tab[],
     addTab: (tab: Tab) => void,
     updateTab: (tabId: string, updates: Partial<Tab>) => void,
+    markTabSaved: (tabId: string, savedRevision: number, updates: Partial<Tab>) => boolean,
+    getTabSaveSnapshot: (tabId: string) => TabSaveSnapshot,
     findTabByPath: (path: string) => Tab | undefined,
     setActiveTabId: (id: string) => void,
     markExternallyModified: (tabId: string) => void,
     onRecentFilesChanged?: () => Promise<void> | void
 ) {
     const openingFiles = useRef<Set<string>>(new Set());
+    const saveQueue = useRef(new KeyedTaskQueue());
+    const tabsRef = useRef(tabs);
+    tabsRef.current = tabs;
 
     // Cleanup openingFiles when tabs change to ensure the lock is released
     // only after the tab actually appears in the state.
@@ -118,12 +166,18 @@ export function useFileManager(
                 path,
                 title: path.split(/[/\\]/).pop() || 'Untitled',
                 content: result.content,
+                revision: 0,
                 cursorLine,
                 cursorColumn,
                 isDirty: false,
                 language,
                 isReadOnly: false,
                 encoding: result.encoding,
+                diskVersion: {
+                    modified: result.modified,
+                    size: result.size,
+                    hash: result.hash,
+                },
                 eol,
                 scrollTop,
                 scrollLeft,
@@ -182,7 +236,7 @@ export function useFileManager(
                 openingFiles.current.delete(path);
             }
         }
-    }, [tabs, addTab, findTabByPath, setActiveTabId, updateTab, addRecentFile, onRecentFilesChanged, markExternallyModified]);
+    }, [addTab, findTabByPath, setActiveTabId, updateTab, onRecentFilesChanged, markExternallyModified]);
 
     /**
      * Open file dialog and load selected file
@@ -205,16 +259,25 @@ export function useFileManager(
     // Returns true only when the file was actually written to disk. Callers that
     // close the tab on save (e.g. the unsaved-changes dialog) MUST check this so
     // a cancelled Save-As or a write error never silently discards the content.
-    const saveFile = useCallback(async (tabId: string): Promise<boolean> => {
-        const tab = tabs.find(t => t.id === tabId);
-        if (!tab) return false;
+    const saveFile = useCallback((tabId: string, contentOverride?: string): Promise<boolean> => {
+        // A formatter-supplied override is an explicit snapshot, so capture the
+        // matching revision now. Ordinary saves intentionally capture both the
+        // content and revision only when their queued operation begins.
+        const overrideRevision = contentOverride === undefined
+            ? undefined
+            : getTabSaveSnapshot(tabId).revision;
 
-        try {
-            let savePath = tab.path;
+        return saveQueue.current.enqueue(tabId, async (): Promise<boolean> => {
+            const tab = tabsRef.current.find(t => t.id === tabId);
+            if (!tab) return false;
+
+            try {
+                const initialSnapshot = getTabSaveSnapshot(tabId);
+                let savePath = initialSnapshot.path;
 
             if (!savePath) {
                 // Save As for untitled files
-                let defaultName = tab.title;
+                let defaultName = initialSnapshot.title;
                 if (!defaultName.includes('.')) {
                     defaultName += '.txt';
                 }
@@ -230,19 +293,33 @@ export function useFileManager(
                 }
             }
 
-            const wasUntitled = !tab.path;
+            const snapshot = getTabSaveSnapshot(tabId);
+            const wasUntitled = !snapshot.path;
+            const savedContent = contentOverride ?? snapshot.content;
+            const savedRevision = overrideRevision ?? snapshot.revision;
             startTimer('file-save');
-            await writeFileContent(savePath, tab.content);
+            const writeResult = await writeWithConflictConfirmation(
+                savePath,
+                savedContent,
+                snapshot.encoding,
+                snapshot.path ? snapshot.diskVersion : null,
+            );
+            if (!writeResult) return false;
             endTimer('file-save');
 
             // Update tab with new path and title
             const newTitle = savePath.split(/[/\\]/).pop() || 'Untitled';
-            updateTab(tabId, {
+            const savedLatestRevision = markTabSaved(tabId, savedRevision, {
                 path: savePath,
                 title: newTitle,
-                isDirty: false,
                 language: detectLanguage(savePath),
                 isUntitled: false,
+                encoding: writeResult.encoding,
+                diskVersion: {
+                    modified: writeResult.modified,
+                    size: writeResult.size,
+                    hash: writeResult.hash,
+                },
             });
 
             // Update file watcher:
@@ -252,37 +329,41 @@ export function useFileManager(
             if (wasUntitled) {
                 fileWatcher.watch(savePath, () => markExternallyModified(tabId));
             } else {
-                try {
-                    const { invoke } = await import('@tauri-apps/api/core');
-                    const metadata = await invoke<{ modified: number }>('get_file_metadata', { path: savePath });
-                    fileWatcher.updateModTime(savePath, metadata.modified);
-                } catch (err) {
-                    console.warn('Failed to update file watcher mod time:', err);
-                }
+                fileWatcher.updateVersion(savePath, {
+                    modified: writeResult.modified,
+                    size: writeResult.size,
+                    exists: true,
+                    identity: writeResult.identity,
+                });
             }
 
             await addRecentFile(savePath);
             if (onRecentFilesChanged) await onRecentFilesChanged();
             await rebuildNativeMenu();
             errorService.showSuccess(`File saved: ${savePath.split(/[\\/]/).pop()}`);
-            return true;
+            return savedLatestRevision;
         } catch (error) {
             errorService.showError('Failed to save file', error as Error);
             return false;
         }
-    }, [tabs, updateTab, markExternallyModified, onRecentFilesChanged]);
+        });
+    }, [getTabSaveSnapshot, markTabSaved, markExternallyModified, onRecentFilesChanged]);
 
     /**
      * Save file with new name
      */
-    const saveFileAs = useCallback(async (tabId: string): Promise<void> => {
-        const tab = tabs.find(t => t.id === tabId);
-        if (!tab) return;
+    const saveFileAs = useCallback((tabId: string): Promise<void> => {
+        return saveQueue.current.enqueue(tabId, async () => {
+            const tab = tabsRef.current.find(t => t.id === tabId);
+            if (!tab) return;
 
-        try {
-            const defaultName = tab.path
-                ? tab.path.split(/[\\/]/).pop()!
-                : (tab.title.includes('.') ? tab.title : tab.title + '.txt');
+            try {
+            const initialSnapshot = getTabSaveSnapshot(tabId);
+            const defaultName = initialSnapshot.path
+                ? initialSnapshot.path.split(/[\\/]/).pop()!
+                : (initialSnapshot.title.includes('.')
+                    ? initialSnapshot.title
+                    : initialSnapshot.title + '.txt');
             const savePath = await saveFileDialog(defaultName);
             if (!savePath) return;
 
@@ -294,21 +375,33 @@ export function useFileManager(
                 return;
             }
 
-            await writeFileContent(savePath, tab.content);
+            const snapshot = getTabSaveSnapshot(tabId);
+            const writeResult = await writeWithConflictConfirmation(
+                savePath,
+                snapshot.content,
+                snapshot.encoding,
+                savePath === snapshot.path ? snapshot.diskVersion : null,
+            );
+            if (!writeResult) return;
 
             // Update tab with new path and title
             const newTitle = savePath.split(/[/\\]/).pop() || 'Untitled';
-            updateTab(tabId, {
+            markTabSaved(tabId, snapshot.revision, {
                 path: savePath,
                 title: newTitle,
-                isDirty: false,
                 language: detectLanguage(savePath),
                 isUntitled: false,
+                encoding: writeResult.encoding,
+                diskVersion: {
+                    modified: writeResult.modified,
+                    size: writeResult.size,
+                    hash: writeResult.hash,
+                },
             });
 
             // Unwatch the old path (if any) and start watching the new path.
-            if (tab.path) {
-                fileWatcher.unwatch(tab.path);
+            if (snapshot.path) {
+                fileWatcher.unwatch(snapshot.path);
             }
             fileWatcher.watch(savePath, () => markExternallyModified(tabId));
 
@@ -316,10 +409,11 @@ export function useFileManager(
             if (onRecentFilesChanged) await onRecentFilesChanged();
             await rebuildNativeMenu();
             errorService.showSuccess(`File saved as: ${savePath.split(/[\\/]/).pop()}`);
-        } catch (error) {
-            errorService.showError('Failed to save file', error as Error);
-        }
-    }, [tabs, updateTab, markExternallyModified, onRecentFilesChanged]);
+            } catch (error) {
+                errorService.showError('Failed to save file', error as Error);
+            }
+        });
+    }, [getTabSaveSnapshot, markTabSaved, markExternallyModified, onRecentFilesChanged]);
 
     /**
      * Reload file from disk (after external modification)
@@ -329,20 +423,42 @@ export function useFileManager(
         if (!tab || !tab.path) return;
 
         try {
+            if (tab.isDirty) {
+                const confirmed = await ask(
+                    `Reloading "${tab.title}" will discard your unsaved changes. Continue?`,
+                    {
+                        title: 'Discard Unsaved Changes?',
+                        kind: 'warning',
+                        okLabel: 'Reload',
+                        cancelLabel: 'Cancel',
+                    },
+                );
+                if (!confirmed) return;
+            }
+
             const result = await readFileContent(tab.path);
             const eol = detectEOL(result.content);
 
             updateTab(tabId, {
                 content: result.content,
                 eol,
+                encoding: result.encoding,
+                diskVersion: {
+                    modified: result.modified,
+                    size: result.size,
+                    hash: result.hash,
+                },
                 isDirty: false,
                 externallyModified: false,
             });
 
             // Update file watcher with new mod time
-            const { invoke } = await import('@tauri-apps/api/core');
-            const metadata = await invoke<{ modified: number }>('get_file_metadata', { path: tab.path });
-            fileWatcher.updateModTime(tab.path, metadata.modified);
+            fileWatcher.updateVersion(tab.path, {
+                modified: result.modified,
+                size: result.size,
+                exists: true,
+                identity: result.identity,
+            });
         } catch (error) {
             console.error('Failed to reload file:', error);
             throw error;
@@ -367,7 +483,6 @@ export function useFileManager(
             pathParts.pop();
             const newPath = [...pathParts, newName].join(oldPath.includes('\\') ? '\\' : '/');
 
-            const { invoke } = await import('@tauri-apps/api/core');
             await invoke('rename_file', { oldPath, newPath });
 
             fileWatcher.unwatch(oldPath);

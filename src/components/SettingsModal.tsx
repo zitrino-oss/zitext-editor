@@ -71,6 +71,10 @@ function Dropdown({ value, options, onChange, ariaLabel }: {
     const triggerRef = useRef<HTMLButtonElement>(null);
 
     const selected = options.find(o => String(o.value) === String(value));
+    const focusOption = (index: number) => {
+        const items = rootRef.current?.querySelectorAll<HTMLElement>('[role="option"]');
+        items?.[(index + items.length) % items.length]?.focus();
+    };
 
     const openMenu = () => {
         const el = triggerRef.current;
@@ -139,6 +143,19 @@ function Dropdown({ value, options, onChange, ariaLabel }: {
                 type="button"
                 className={`s-dropdown-trigger ${open ? 'open' : ''}`}
                 onClick={() => (open ? setOpen(false) : openMenu())}
+                onKeyDown={(event) => {
+                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        if (!open) openMenu();
+                        requestAnimationFrame(() => {
+                            const selectedIndex = Math.max(
+                                0,
+                                options.findIndex(option => String(option.value) === String(value)),
+                            );
+                            focusOption(event.key === 'ArrowDown' ? selectedIndex : options.length - 1);
+                        });
+                    }
+                }}
                 aria-haspopup="listbox"
                 aria-expanded={open}
                 aria-label={ariaLabel}
@@ -153,9 +170,25 @@ function Dropdown({ value, options, onChange, ariaLabel }: {
                             <li
                                 key={String(o.value)}
                                 role="option"
+                                tabIndex={isSel ? 0 : -1}
                                 aria-selected={isSel}
                                 className={`s-dropdown-option ${isSel ? 'selected' : ''}`}
                                 onClick={() => { onChange(String(o.value)); setOpen(false); }}
+                                onKeyDown={(event) => {
+                                    const index = options.indexOf(o);
+                                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                        event.preventDefault();
+                                        focusOption(index + (event.key === 'ArrowDown' ? 1 : -1));
+                                    } else if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault();
+                                        onChange(String(o.value));
+                                        setOpen(false);
+                                        triggerRef.current?.focus();
+                                    } else if (event.key === 'Escape') {
+                                        setOpen(false);
+                                        triggerRef.current?.focus();
+                                    }
+                                }}
                             >
                                 {o.label}
                             </li>
@@ -223,6 +256,7 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
     const [checkForUpdates, setCheckForUpdates] = useState(settings.checkForUpdates);
 
     useEffect(() => {
+        if (!isOpen) return;
         setTheme(settings.theme);
         setFontFamily(settings.fontFamily);
         setFontSize(settings.fontSize);
@@ -236,7 +270,7 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
         setInsertSpaces(settings.insertSpaces);
         setFormatOnSave(settings.formatOnSave);
         setCheckForUpdates(settings.checkForUpdates);
-    }, [settings]);
+    }, [isOpen, settings]);
 
     if (!isOpen) return null;
 

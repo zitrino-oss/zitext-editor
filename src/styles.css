@@ -262,7 +262,9 @@ body {
   color: white;
 }
 
-.menu-submenu:hover .menu-dropdown-nested {
+.menu-submenu:hover > .menu-dropdown-nested,
+.menu-submenu:focus-within > .menu-dropdown-nested,
+.menu-dropdown-nested.keyboard-open {
   display: block;
 }
 

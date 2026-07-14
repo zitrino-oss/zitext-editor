@@ -12,6 +12,20 @@ export interface ShortcutHandler {
     action: () => void;
 }
 
+export function normalizeShortcutKey(key: string): string {
+    return key === ' ' ? 'space' : key.toLowerCase();
+}
+
+const MODIFIER_REQUIRED_KEYS = new Set([
+    'space', 'enter', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright',
+    'home', 'end', 'pageup', 'pagedown',
+]);
+
+export function requiresShortcutModifier(key: string): boolean {
+    const normalized = normalizeShortcutKey(key);
+    return normalized.length === 1 || MODIFIER_REQUIRED_KEYS.has(normalized);
+}
+
 export function handleKeyDown(
     event: KeyboardEvent,
     handlers: ShortcutHandler[]
@@ -32,7 +46,7 @@ export function handleKeyDown(
             : true;
 
         if (
-            event.key.toLowerCase() === handler.key.toLowerCase() &&
+            normalizeShortcutKey(event.key) === normalizeShortcutKey(handler.key) &&
             modifierMatch &&
             shiftMatch &&
             altMatch
@@ -67,6 +81,16 @@ export function parseBinding(binding: string): { key: string; ctrlOrCmd: boolean
     }
 
     return { key, ctrlOrCmd, shift, alt };
+}
+
+/** Drops legacy shortcuts that can fire while the user is simply typing. */
+export function sanitizeKeybindings(
+    bindings: Record<string, string>,
+): Record<string, string> {
+    return Object.fromEntries(Object.entries(bindings).filter(([, binding]) => {
+        const parsed = parseBinding(binding);
+        return !(requiresShortcutModifier(parsed.key) && !parsed.ctrlOrCmd && !parsed.alt);
+    }));
 }
 
 export function getShortcutDisplay(key: string, ctrlOrCmd: boolean = true, shift: boolean = false): string {

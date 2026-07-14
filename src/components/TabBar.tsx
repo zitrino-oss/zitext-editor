@@ -72,10 +72,38 @@ function TabItem({
 
     return (
         <div
+            role="tab"
+            aria-selected={isActive}
+            aria-controls="editor-workspace"
+            tabIndex={isActive ? 0 : -1}
             className={`tab ${isActive ? 'active' : ''} ${isSource ? 'tab-source' : ''} ${tab.isPinned ? 'pinned' : ''}`}
             style={{ transform: shift !== 0 ? `translateX(${shift}px)` : undefined }}
             onClick={onClick}
             onDoubleClick={handleDoubleClick}
+            onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onClick();
+                } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+                    event.preventDefault();
+                    const tabs = Array.from(
+                        event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
+                    );
+                    const current = tabs.indexOf(event.currentTarget);
+                    const direction = event.key === 'ArrowRight' ? 1 : -1;
+                    const next = tabs[(current + direction + tabs.length) % tabs.length];
+                    next?.focus();
+                    next?.click();
+                } else if (event.key === 'Home' || event.key === 'End') {
+                    event.preventDefault();
+                    const tabs = Array.from(
+                        event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
+                    );
+                    const next = event.key === 'Home' ? tabs[0] : tabs[tabs.length - 1];
+                    next?.focus();
+                    next?.click();
+                }
+            }}
             onMouseDown={(e) => {
                 if (isEditing || tab.isPinned) return;
                 if ((e.target as HTMLElement).closest('button')) return;
@@ -327,7 +355,12 @@ export function TabBar({ tabs, activeTabId, onTabClick, onTabClose, onNewTab, on
 
     return (
         <>
-            <div className={`tab-bar${isDragging ? ' dragging' : ''}`} ref={tabBarRef}>
+            <div
+                className={`tab-bar${isDragging ? ' dragging' : ''}`}
+                ref={tabBarRef}
+                role="tablist"
+                aria-label="Open files"
+            >
                 {tabs.map((tab, index) => (
                     <TabItem
                         key={tab.id}

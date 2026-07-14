@@ -1,7 +1,10 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-
-type AutosaveMode = 'off' | 'afterDelay' | 'onFocusChange';
+import {
+    registerAutosaveEdit,
+    shouldBlockAutosaveRetry,
+    type AutosaveMode,
+} from './autosavePolicy';
 
 interface UseAutosaveOptions {
     mode: AutosaveMode;
@@ -10,13 +13,15 @@ interface UseAutosaveOptions {
     /** The currently focused tab. In "On Focus Change" mode a change here means
      *  focus moved to another tab inside the app, which triggers a save. */
     activeTabId: string | null;
-    onSave: () => Promise<void> | void;
+    onSave: () => Promise<boolean> | boolean;
 }
 
 export function useAutosave({ mode, delay, isDirty, activeTabId, onSave }: UseAutosaveOptions) {
     const timeoutRef = useRef<number | null>(null);
     const lastSaveTimeRef = useRef<number>(Date.now());
     const isSavingRef = useRef<boolean>(false);
+    const editGenerationRef = useRef(0);
+    const retryBlockedRef = useRef(false);
 
     // Keep refs up-to-date so the stable callbacks below always read the latest
     // values without being recreated (and thus re-subscribing) every render.
@@ -39,26 +44,51 @@ export function useAutosave({ mode, delay, isDirty, activeTabId, onSave }: UseAu
 
     // Perform save — reads from refs so it's safe to call from any closure age.
     const performSave = useCallback(async () => {
-        if (isSavingRef.current || !isDirtyRef.current) {
+        if (isSavingRef.current || !isDirtyRef.current || retryBlockedRef.current) {
             return;
         }
 
         isSavingRef.current = true;
+        const startingGeneration = editGenerationRef.current;
+        let succeeded = false;
         try {
-            await onSaveRef.current();
-            lastSaveTimeRef.current = Date.now();
+            succeeded = await onSaveRef.current();
+            if (succeeded) {
+                lastSaveTimeRef.current = Date.now();
+            }
         } catch (error) {
             console.error('Autosave failed:', error);
         } finally {
             isSavingRef.current = false;
+            // A failed write must not create a permanent retry storm. A later
+            // edit clears this block and schedules one fresh attempt.
+            retryBlockedRef.current = shouldBlockAutosaveRetry(
+                succeeded,
+                startingGeneration,
+                editGenerationRef.current,
+            );
+            // If content changed while the write was in flight, the save layer
+            // intentionally leaves the tab dirty. Re-arm delayed autosave so
+            // that newer revision is not stranded without another keystroke.
+            if (modeRef.current === 'afterDelay' && isDirtyRef.current && !retryBlockedRef.current) {
+                clearPendingTimeout();
+                timeoutRef.current = window.setTimeout(() => {
+                    performSave();
+                }, delayRef.current);
+            }
         }
-    }, []); // stable — no prop deps; uses refs instead
+    }, [clearPendingTimeout]);
 
     // Mode: After Delay. Called by the editor on every content edit so the timer
     // is (re)started on each keystroke — the file saves `delay` ms after the LAST
     // edit (a debounce), not `delay` ms after the first one. A no-op in other modes.
     const notifyChange = useCallback(() => {
-        if (modeRef.current !== 'afterDelay') return;
+        // Every edit releases a failure block, including in onFocusChange mode.
+        // Only timer scheduling is specific to afterDelay.
+        const edit = registerAutosaveEdit(modeRef.current, editGenerationRef.current);
+        editGenerationRef.current = edit.generation;
+        retryBlockedRef.current = false;
+        if (!edit.shouldSchedule) return;
         clearPendingTimeout();
         timeoutRef.current = window.setTimeout(() => {
             performSave();

@@ -36,12 +36,16 @@ export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: F
     // keystroke before the user presses Enter / clicks Search.
     const [searchedQuery, setSearchedQuery] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
+    const requestIdRef = useRef(0);
 
     const runSearch = useCallback(async (q: string, cs: boolean, ww: boolean) => {
+        const requestId = ++requestIdRef.current;
         if (!folderPath || !q.trim()) {
             setResults([]);
             setTotalMatches(0);
             setSearchedQuery('');
+            setSearchError(null);
+            setIsSearching(false);
             return;
         }
 
@@ -55,6 +59,7 @@ export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: F
                 caseSensitive: cs,
                 wholeWord: ww,
             });
+            if (requestId !== requestIdRef.current) return;
 
             // Group by file
             const grouped = new Map<string, SearchMatch[]>();
@@ -74,12 +79,13 @@ export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: F
             setTotalMatches(matches.length);
             setSearchedQuery(q);
         } catch (err) {
+            if (requestId !== requestIdRef.current) return;
             setSearchError((err as Error).message || String(err));
             setResults([]);
             setTotalMatches(0);
             setSearchedQuery(q);
         } finally {
-            setIsSearching(false);
+            if (requestId === requestIdRef.current) setIsSearching(false);
         }
     }, [folderPath]);
 

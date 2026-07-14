@@ -1,14 +1,16 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useTabManager } from './useTabManager';
 import { useFileManager } from './useFileManager';
 import { useSettingsManager } from './useSettingsManager';
 import { useSplitViewManager } from './useSplitViewManager';
-import { saveSession, getLastSession } from '../utils/fileOperations';
+import { saveSession, getLastSession, rebuildNativeMenu } from '../utils/fileOperations';
 import { fileWatcher } from '../utils/fileWatcher';
 import { detectEOL } from '../utils/fileOperations';
 import { detectLanguageFromContent } from '../utils/contentLanguageDetection';
 import { AUTO_LANGUAGE_DETECTION_THRESHOLD } from '../constants';
 import { endTimer } from '../utils/perfMetrics';
+import { disposeModelForTab } from '../utils/editorModels';
 
 const SESSION_SAVE_INTERVAL_MS = 30_000; // periodic snapshot every 30 seconds
 
@@ -23,12 +25,18 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
     const tabManager = useTabManager();
     const settingsManager = useSettingsManager();
     const splitViewManager = useSplitViewManager();
-    const isInitialized = useRef(false);
+    const rightPaneTabId = splitViewManager.rightPaneTabId;
+    const closeRightPane = splitViewManager.closeRightPane;
+    const initializationStarted = useRef(false);
+    const initializeEditorRef = useRef<() => Promise<void>>(async () => {});
+    const [isInitializing, setIsInitializing] = useState(true);
 
     const fileManager = useFileManager(
         tabManager.tabs,
         tabManager.addTab,
         tabManager.updateTab,
+        tabManager.markTabSaved,
+        tabManager.getTabSaveSnapshot,
         tabManager.findTabByPath,
         tabManager.setActiveTabId,
         tabManager.markExternallyModified,
@@ -37,9 +45,14 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
 
     // Load settings and restore session on mount
     useEffect(() => {
-        if (isInitialized.current) return;
-        isInitialized.current = true;
-        initializeEditor();
+        if (initializationStarted.current) return;
+        initializationStarted.current = true;
+        void initializeEditorRef.current()
+            .catch(error => console.error('Editor initialization failed:', error))
+            .finally(() => {
+                setIsInitializing(false);
+                endTimer('app-startup');
+            });
     }, []);
 
     const initializeEditor = async () => {
@@ -55,7 +68,6 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
         let startupFiles: string[] = [];
         let startupFolder: string | null = null;
         try {
-            const { invoke } = await import('@tauri-apps/api/core');
             startupFiles = await invoke<string[]>('get_startup_args');
             startupFolder = await invoke<string | null>('get_startup_folder');
         } catch (err) {
@@ -139,7 +151,6 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
             }
 
             // Rebuild menu once after all files are loaded
-            const { rebuildNativeMenu } = await import('../utils/fileOperations');
             await rebuildNativeMenu();
 
             // Activate the desired tab directly using the tab ID we already know —
@@ -170,13 +181,16 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
                 tabManager.createNewTab();
             }
         }
-        endTimer('app-startup');
     };
+    initializeEditorRef.current = initializeEditor;
 
     // Enhanced updateTabContent with auto-language detection
     const updateTabContent = (tabId: string, content: string) => {
         const tab = tabManager.tabs.find(t => t.id === tabId);
         if (!tab) return;
+        // Both split panes can observe the same Monaco model. Ignore the second
+        // pane's echo instead of creating a duplicate revision/dirty transition.
+        if (tabManager.getTabContent(tabId) === content) return;
 
         // Auto-detect language for untitled files when content changes significantly
         let newLanguage = tab.language;
@@ -233,18 +247,34 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
     }, []);
 
     // Wrap closeTab to stop watching and signal --wait mode when a tab is closed.
+    const managedTabs = tabManager.tabs;
+    const managedCloseTab = tabManager.closeTab;
+    const clearExternalModification = tabManager.clearExternalModification;
     const closeTab = useCallback(async (tabId: string) => {
-        const tab = tabManager.tabs.find(t => t.id === tabId);
+        const tab = managedTabs.find(t => t.id === tabId);
         if (tab?.path) {
             fileWatcher.unwatch(tab.path);
-            // Signal --wait mode lock files
-            try {
-                const { invoke } = await import('@tauri-apps/api/core');
-                await invoke('signal_tab_closed', { path: tab.path });
-            } catch { /* non-critical */ }
         }
-        tabManager.closeTab(tabId);
-    }, [tabManager.tabs, tabManager.closeTab]);
+        // Remove the tab immediately after the caller's dirty check. Waiting on
+        // IPC while it remains editable creates a second data-loss window.
+        managedCloseTab(tabId);
+        if (rightPaneTabId === tabId) {
+            closeRightPane();
+        }
+        disposeModelForTab(tabId);
+
+        if (tab?.path) {
+            // --wait signalling is bookkeeping and must not delay UI closure.
+            void invoke('signal_tab_closed', { path: tab.path })
+                .catch(() => { /* non-critical */ });
+        }
+    }, [managedTabs, managedCloseTab, rightPaneTabId, closeRightPane]);
+
+    const ignoreExternalChange = useCallback((tabId: string) => {
+        const tab = managedTabs.find(candidate => candidate.id === tabId);
+        if (tab?.path) fileWatcher.acknowledge(tab.path);
+        clearExternalModification(tabId);
+    }, [managedTabs, clearExternalModification]);
 
     return {
         // Tab management
@@ -257,6 +287,7 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
         beginClose,
         updateTabContent,
         updateCursorPosition: tabManager.updateCursorPosition,
+        updateScrollPosition: tabManager.updateScrollPosition,
         toggleReadOnly: tabManager.toggleReadOnly,
         changeLanguage: tabManager.changeLanguage,
         togglePreview: tabManager.togglePreview,
@@ -270,11 +301,11 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
         saveFileAs: fileManager.saveFileAs,
         reloadFileFromDisk: fileManager.reloadFileFromDisk,
         renameFile: fileManager.renameFile,
-        ignoreExternalChange: tabManager.clearExternalModification,
+        ignoreExternalChange,
 
         // Settings
         settings: settingsManager.settings,
-        isLoading: settingsManager.isLoading,
+        isLoading: settingsManager.isLoading || isInitializing,
         updateSettings: settingsManager.updateSettings,
 
         // Split view

@@ -7,6 +7,7 @@ interface ExternalChangePromptProps {
     // Using a counter (rather than just tabId) means the prompt reappears even
     // when the same tab is modified twice in a row.
     changeCount: number;
+    isDeleted?: boolean;
     onReload: () => void;
     onIgnore: () => void;
 }
@@ -15,6 +16,7 @@ export function ExternalChangePrompt({
     tabId,
     fileName,
     changeCount,
+    isDeleted = false,
     onReload,
     onIgnore,
 }: ExternalChangePromptProps) {
@@ -43,14 +45,14 @@ export function ExternalChangePrompt({
             <div className="external-change-content">
                 <span className="external-change-icon">⚠️</span>
                 <span className="external-change-message">
-                    <strong>{fileName}</strong> has been modified externally.
+                    <strong>{fileName}</strong> {isDeleted ? 'was deleted externally.' : 'has been modified externally.'}
                 </span>
                 <div className="external-change-actions">
                     <button
                         className="external-change-btn external-change-btn-primary"
                         onClick={handleReload}
                     >
-                        Reload
+                        {isDeleted ? 'Save Again' : 'Reload'}
                     </button>
                     <button
                         className="external-change-btn"

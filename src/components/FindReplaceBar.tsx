@@ -25,6 +25,8 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
     const [matches, setMatches] = useState<MatchState>({ total: 0, current: 0 });
     const searchRef = useRef<HTMLInputElement>(null);
     const decorationsRef = useRef<string[]>([]);
+    const decoratedEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+    const decoratedModelRef = useRef<editor.ITextModel | null>(null);
     const matchRangesRef = useRef<editor.FindMatch[]>([]);
     const currentIdxRef = useRef(0);
 
@@ -45,22 +47,34 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
                 if (text && !text.includes('\n')) setSearch(text);
             }
         }
-    }, [isOpen]);
+    }, [isOpen, getEditor]);
 
     // Clear decorations helper
     const clearDeco = useCallback(() => {
-        const ed = getEditor();
-        if (ed && decorationsRef.current.length > 0) {
-            decorationsRef.current = ed.deltaDecorations(decorationsRef.current, []);
+        const model = decoratedModelRef.current;
+        if (model && !model.isDisposed() && decorationsRef.current.length > 0) {
+            decorationsRef.current = model.deltaDecorations(decorationsRef.current, []);
+        } else {
+            decorationsRef.current = [];
         }
+        decoratedEditorRef.current = null;
+        decoratedModelRef.current = null;
         matchRangesRef.current = [];
-    }, [getEditor]);
+    }, []);
 
     // Core search function
     const doSearch = useCallback((resetIndex = false) => {
         const ed = getEditor();
         if (!ed) return;
         const model = ed.getModel();
+        if (
+            (decoratedEditorRef.current && decoratedEditorRef.current !== ed) ||
+            (decoratedModelRef.current && decoratedModelRef.current !== model)
+        ) {
+            clearDeco();
+        }
+        decoratedEditorRef.current = ed;
+        decoratedModelRef.current = model;
         if (!model || !search) {
             clearDeco();
             setMatches({ total: 0, current: 0 });
@@ -91,7 +105,7 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
                     },
                 },
             }));
-            decorationsRef.current = ed.deltaDecorations(decorationsRef.current, decos);
+            decorationsRef.current = model.deltaDecorations(decorationsRef.current, decos);
 
             if (found.length > 0) {
                 ed.setSelection(found[idx].range);
@@ -110,7 +124,22 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
     // Re-run search when search text or options change
     useEffect(() => {
         if (isOpen) doSearch(true);
-    }, [search, matchCase, wholeWord, useRegex, isOpen]);
+    }, [search, matchCase, wholeWord, useRegex, isOpen, doSearch]);
+
+    // Monaco can keep the editor instance while swapping its model. Clear IDs
+    // against the old model and immediately rebuild matches for the new one.
+    useEffect(() => {
+        if (!isOpen) return;
+        const ed = getEditor();
+        if (!ed) return;
+        const subscription = ed.onDidChangeModel(() => {
+            clearDeco();
+            doSearch(true);
+        });
+        return () => subscription.dispose();
+    }, [isOpen, getEditor, clearDeco, doSearch]);
+
+    useEffect(() => clearDeco, [clearDeco]);
 
     // Navigate matches
     const navigate = useCallback((dir: 1 | -1) => {

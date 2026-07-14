@@ -1,5 +1,10 @@
 import { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
+import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+import JsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
+import CssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
+import HtmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
+import TypeScriptWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
 // Deep import: MenuRegistry/MenuId are not part of Monaco's public API surface.
 // Resolves to the same singleton editor.main already populated above.
 // @ts-expect-error - no type declarations for this internal module path
@@ -36,22 +41,24 @@ loader.config({ monaco });
     for (const item of kept) items.push(item);
 })();
 
-// Set up worker paths for production builds
+// Vite worker imports resolve to hashed production assets and valid dev URLs.
+// Returning Worker instances also covers Monaco's base editor worker, which
+// was previously configured as an editor.worker.js file that never existed.
 self.MonacoEnvironment = {
-  getWorkerUrl: function (_moduleId: string, label: string) {
+  getWorker(_moduleId: string, label: string) {
     if (label === 'json') {
-      return './json.worker.js';
+      return new JsonWorker();
     }
     if (label === 'css' || label === 'scss' || label === 'less') {
-      return './css.worker.js';
+      return new CssWorker();
     }
     if (label === 'html' || label === 'handlebars' || label === 'razor') {
-      return './html.worker.js';
+      return new HtmlWorker();
     }
     if (label === 'typescript' || label === 'javascript') {
-      return './ts.worker.js';
+      return new TypeScriptWorker();
     }
-    return './editor.worker.js';
+    return new EditorWorker();
   },
 };
 

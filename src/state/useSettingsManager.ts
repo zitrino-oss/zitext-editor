@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { Settings } from '../types';
 import { DEFAULT_FONT_SIZE, SIDEBAR_DEFAULT_WIDTH } from '../constants';
+import { sanitizeKeybindings } from '../utils/shortcuts';
 
 /** Default settings for the editor. Must match `AppSettings::default()` in
  *  src-tauri/src/lib.rs — a mismatch causes the chrome and editor to render
@@ -93,6 +94,7 @@ export function useSettingsManager() {
             if (/Anonymous Pro|Inconsolata/.test(merged.fontFamily)) {
                 merged.fontFamily = DEFAULT_SETTINGS.fontFamily;
             }
+            merged.keybindings = sanitizeKeybindings(merged.keybindings);
             // Force agreement between app theme and editor theme so a stale
             // settings file can't leave us with dark chrome + light editor.
             const corrected = syncEditorThemeToAppTheme(merged);
@@ -149,6 +151,15 @@ export function useSettingsManager() {
      * Update specific settings
      */
     const updateSettings = useCallback(async (updates: Partial<Settings>): Promise<void> => {
+        if (Object.prototype.hasOwnProperty.call(updates, 'openedFolder')) {
+            try {
+                await invoke('set_opened_folder', { path: updates.openedFolder ?? null });
+            } catch (error) {
+                console.error('Failed to persist opened folder:', error);
+                return;
+            }
+        }
+
         const updated = { ...settingsRef.current, ...updates };
         // Advance the ref synchronously so a second call in the same tick merges
         // onto this result rather than the pre-update value.
