@@ -2,6 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::fs;
 use std::io::Write;
 use tempfile::TempDir;
+use zitext_editor_lib::benchmark_support;
 
 /// Generates a text file of approximately `size_bytes` with realistic line content.
 fn create_test_file(dir: &TempDir, name: &str, size_bytes: usize) -> std::path::PathBuf {
@@ -31,7 +32,7 @@ fn bench_read_small_file(c: &mut Criterion) {
     let path = create_test_file(&dir, "small.txt", 10 * 1024); // 10 KB
     c.bench_function("read_file_10KB", |b| {
         b.iter(|| {
-            let _ = black_box(fs::read_to_string(&path).unwrap());
+            let _ = black_box(benchmark_support::read_authorized_text(&path).unwrap());
         });
     });
 }
@@ -41,7 +42,7 @@ fn bench_read_medium_file(c: &mut Criterion) {
     let path = create_test_file(&dir, "medium.txt", 500 * 1024); // 500 KB
     c.bench_function("read_file_500KB", |b| {
         b.iter(|| {
-            let _ = black_box(fs::read_to_string(&path).unwrap());
+            let _ = black_box(benchmark_support::read_authorized_text(&path).unwrap());
         });
     });
 }
@@ -51,7 +52,7 @@ fn bench_read_large_file(c: &mut Criterion) {
     let path = create_test_file(&dir, "large.txt", 5 * 1024 * 1024); // 5 MB
     c.bench_function("read_file_5MB", |b| {
         b.iter(|| {
-            let _ = black_box(fs::read_to_string(&path).unwrap());
+            let _ = black_box(benchmark_support::read_authorized_text(&path).unwrap());
         });
     });
 }
@@ -62,7 +63,8 @@ fn bench_write_file(c: &mut Criterion) {
     let content = "x".repeat(1024 * 1024); // 1 MB
     c.bench_function("write_file_1MB", |b| {
         b.iter(|| {
-            fs::write(&path, black_box(&content)).unwrap();
+            benchmark_support::write_authorized_atomic(&path, black_box(content.as_bytes()))
+                .unwrap();
         });
     });
 }
@@ -110,7 +112,7 @@ fn bench_validate_path(c: &mut Criterion) {
     c.bench_function("validate_path", |b| {
         b.iter(|| {
             let p = std::path::PathBuf::from(black_box(&path_str));
-            let _ = p.canonicalize();
+            let _ = benchmark_support::authorize_for_benchmark(&p).unwrap();
         });
     });
 }

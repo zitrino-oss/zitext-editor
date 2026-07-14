@@ -4,14 +4,12 @@
   "description": "Capability for the main window",
   "windows": ["main"],
   "permissions": [
-    "core:default",
+    "core:app:allow-version",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "core:window:allow-set-title",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
-    "dialog:allow-ask",
-    {
-      "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://zitext.com/*" }]
-    }
+    "dialog:allow-ask"
   ]
 }

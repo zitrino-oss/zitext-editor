@@ -30,6 +30,8 @@ rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 encoding_rs = "0.8"
+tempfile = "3"
+sha2 = "0.10.9"
 tokio = { version = "1", features = ["sync", "time"] }
 url = "2"
 dirs = "5"
@@ -42,9 +44,7 @@ libc = "0.2"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-tempfile = "3"
 
 [[bench]]
 name = "file_operations"
 harness = false
-

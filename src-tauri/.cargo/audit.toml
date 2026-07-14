@@ -1,4 +1,7 @@
 [advisories]
+# Owner for every temporary exception below: ZITEXT security maintainers.
+# Next mandatory review: 2026-10-01. Remove an exception as soon as its
+# upstream dependency accepts a patched version.
 # RUSTSEC-2026-0097: rand 0.8.5 unsound with custom logger using rand::rng()
 # This is a transitive dependency via: rand → phf_generator → markup5ever →
 # html5ever → tauri-utils → tauri. Cannot be fixed by direct dep update;
@@ -13,4 +16,9 @@
 # untrusted runtime input, so the DoS vectors do not apply. wayland-scanner
 # pins `quick-xml = "^0.39"` and cannot take 0.41 until upstream updates.
 # Remove these two once wayland-scanner bumps its quick-xml requirement.
-ignore = ["RUSTSEC-2026-0097", "RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]
+ignore = [
+  "RUSTSEC-2024-0429",
+  "RUSTSEC-2026-0097",
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+]
