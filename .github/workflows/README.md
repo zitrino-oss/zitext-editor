@@ -12,7 +12,7 @@ This workflow automatically builds ZITEXT Editor for macOS, Windows, and Linux, 
 ✅ **Code signing:**
 - macOS: Full code signing and notarization (required — build fails without secrets)
 - Windows: Code signing via Authenticode (required for removing SmartScreen warnings; configure secrets below)
-- Linux: No signing required
+- Linux: Detached GPG signatures (required)
 
 ✅ **SHA256 checksums:**
 - A `.sha256` sidecar is generated alongside every installer
@@ -24,16 +24,11 @@ This workflow automatically builds ZITEXT Editor for macOS, Windows, and Linux, 
 - Organizes files in version folders (e.g., `v1.1.0/`)
 - Sets public-read permissions for downloads
 
-## How to Trigger
+## How to trigger
 
-### Option 1: Manual Trigger (Recommended for first run)
-1. Go to GitHub repository → **Actions** tab
-2. Select **"Release Build"** workflow
-3. Click **"Run workflow"**
-4. Enter version: `1.1.0`
-5. Click **"Run workflow"**
+Production releases originate only from immutable version tags. The tag must
+match `package.json`, `package-lock.json`, `Cargo.toml`, and `tauri.conf.json`.
 
-### Option 2: Git Tag (Automated)
 ```bash
 git tag v1.1.0
 git push origin v1.1.0
@@ -50,9 +45,13 @@ Make sure all these secrets are configured in your repository:
 - `APPLE_TEAM_ID` - 10-character team ID
 - `APPLE_APP_SPECIFIC_PASSWORD` - App-specific password for notarization
 
-### Windows Signing (Optional)
-- `WINDOWS_CERTIFICATE` - Base64-encoded .pfx certificate (optional)
-- `WINDOWS_CERTIFICATE_PASSWORD` - Password for .pfx file (optional)
+### Windows signing
+- `WINDOWS_CERTIFICATE` - Base64-encoded .pfx certificate
+- `WINDOWS_CERTIFICATE_PASSWORD` - Password for .pfx file
+
+### Linux signing
+- `GPG_PRIVATE_KEY` - Armored private key used for detached signatures
+- `GPG_PASSPHRASE` - Private-key passphrase
 
 ### Cloudflare R2
 - `R2_ACCOUNT_ID` - Cloudflare account ID
@@ -76,8 +75,10 @@ r2://your-bucket/v1.1.0/
 ├── ZITEXT-1.1.0-Windows-x64.exe.sha256
 ├── ZITEXT-1.1.0-Linux-x64.AppImage
 ├── ZITEXT-1.1.0-Linux-x64.AppImage.sha256
+├── ZITEXT-1.1.0-Linux-x64.AppImage.asc
 ├── ZITEXT-1.1.0-Linux-amd64.deb
-└── ZITEXT-1.1.0-Linux-amd64.deb.sha256
+├── ZITEXT-1.1.0-Linux-amd64.deb.sha256
+└── ZITEXT-1.1.0-Linux-amd64.deb.asc
 ```
 
 ## Build Time
@@ -97,8 +98,7 @@ Total workflow time: ~20-25 minutes
 - Review notarization logs in workflow output
 
 ### Windows Build Fails
-- If Windows signing is enabled, verify certificate secrets
-- If not using Windows signing, ensure secrets are not set (workflow will skip signing)
+- Verify both certificate secrets and inspect the Authenticode verification output
 
 ### R2 Upload Fails
 - Verify R2 credentials are correct
