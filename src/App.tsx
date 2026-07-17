@@ -91,6 +91,7 @@ function App() {
         reorderTabs,
         renameFile,
         reloadFileFromDisk,
+        revertToBaseline,
         ignoreExternalChange,
         updateSettings,
         splitViewEnabled,
@@ -399,7 +400,9 @@ function App() {
         if (settings.formatOnSave) {
             contentOverride = await formatTabContent(tabId);
         }
-        return await saveFile(tabId, contentOverride);
+        // Manual save (Ctrl+S / File > Save / save-on-close) — advances the
+        // revert baseline, unlike autosave which calls saveFile directly.
+        return await saveFile(tabId, contentOverride, true);
     }, [settings.formatOnSave, formatTabContent, saveFile]);
 
     // ─── App-close (quit) with unsaved-changes prompt ───────────────────────
@@ -460,10 +463,22 @@ function App() {
             },
         );
         if (confirmed) {
-            await reloadFileFromDisk(focusedTabId);
-            errorService.showSuccess(`Reverted to saved version`);
+            try {
+                // Revert to the last intentional save point (the tab's baseline),
+                // not the current disk contents — autosave may have already
+                // written the edits we're discarding. revertToBaseline rewrites
+                // the file with the baseline so those autosaved edits are undone.
+                const reverted = await revertToBaseline(focusedTabId);
+                if (reverted) {
+                    errorService.showSuccess(`Reverted to saved version`);
+                }
+            } catch (error) {
+                // Surface failures (locked file, permissions, etc.) instead of
+                // silently swallowing them as an unhandled rejection.
+                errorService.showError('Failed to revert file', error as Error);
+            }
         }
-    }, [focusedTabId, focusedTab, reloadFileFromDisk]);
+    }, [focusedTabId, focusedTab, revertToBaseline]);
 
     // ─── Find / Replace (custom bar) ──────────────────────────────────────
 

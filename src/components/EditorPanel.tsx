@@ -172,12 +172,9 @@ export function EditorPanel({
     // Monaco for genuinely external changes (Go To Line, session restore).
     const lastEmittedPosRef = useRef<{ line: number; column: number } | null>(null);
 
-    // Wire up the drag-detection listeners once the editor DOM node is available.
-    // When the Column Selection setting is on, holding Alt flips Monaco into
-    // columnSelection mode so an Alt(+Shift)+drag makes a rectangular block
-    // selection; releasing Alt restores normal selection. When the setting is
-    // off, the Alt listeners are not attached and columnSelection stays false,
-    // so the toggle actually controls the behavior.
+    // Wire up drag-detection listeners once the editor DOM node is available.
+    // isDraggingRef feeds the cursor-sync guard further below, unrelated to
+    // column selection.
     useEffect(() => {
         if (!isEditorReady || !editorRef.current) return;
         const domNode = editorRef.current.getDomNode();
@@ -186,27 +183,62 @@ export function EditorPanel({
         const onMouseUp   = () => { isDraggingRef.current = false; };
         domNode.addEventListener('mousedown', onMouseDown);
         window.addEventListener('mouseup', onMouseUp);   // global — catches release anywhere
-
-        const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Alt') editorRef.current?.updateOptions({ columnSelection: true });
-        };
-        const onKeyUp = (e: KeyboardEvent) => {
-            if (e.key === 'Alt') editorRef.current?.updateOptions({ columnSelection: false });
-        };
-        if (enableColumnSelection) {
-            window.addEventListener('keydown', onKeyDown);
-            window.addEventListener('keyup', onKeyUp);
-        } else {
-            // Ensure a stale "Alt was held" state can't leave column mode stuck on
-            // after the user turns the setting off.
-            editorRef.current.updateOptions({ columnSelection: false });
-        }
-
         return () => {
             domNode.removeEventListener('mousedown', onMouseDown);
             window.removeEventListener('mouseup', onMouseUp);
-            window.removeEventListener('keydown', onKeyDown);
-            window.removeEventListener('keyup', onKeyUp);
+        };
+    }, [isEditorReady]);
+
+    // Monaco's own mouse handling makes Alt+Shift+Drag a rectangular block
+    // selection unconditionally — that decision is hardcoded off each raw
+    // pointer event's modifier keys (see its internal viewController's
+    // dispatchMouse, re-read on every pointerdown AND every subsequent
+    // pointermove of the drag) and never consults the `columnSelection`
+    // editor option, so there is no built-in option that gates this gesture.
+    // To make the "Column Selection" setting actually control it, capture
+    // pointerdown/pointermove/pointerup in the capture phase — before
+    // Monaco's own listener (bound in the bubble phase on an inner view
+    // node) ever sees them — and, only when the setting is off and only for
+    // the duration of a drag that started as Alt+Shift, shadow altKey/
+    // shiftKey to false on the same live event (rather than canceling and
+    // replaying a synthetic one) so Monaco's pointer-capture handling keeps
+    // working undisturbed and resolves the gesture as an ordinary drag-select.
+    useEffect(() => {
+        if (!isEditorReady || !editorRef.current || enableColumnSelection) return;
+        const domNode = editorRef.current.getDomNode();
+        if (!domNode) return;
+
+        // The pointerId currently being suppressed, or null when no
+        // Alt+Shift-drag is in progress.
+        let suppressedPointerId: number | null = null;
+
+        const suppressModifiers = (e: PointerEvent) => {
+            Object.defineProperty(e, 'altKey', { get: () => false, configurable: true });
+            Object.defineProperty(e, 'shiftKey', { get: () => false, configurable: true });
+        };
+
+        const onPointerDownCapture = (e: PointerEvent) => {
+            if (e.button !== 0 || !e.altKey || !e.shiftKey) return;
+            suppressedPointerId = e.pointerId;
+            suppressModifiers(e);
+        };
+        const onPointerMoveCapture = (e: PointerEvent) => {
+            if (e.pointerId !== suppressedPointerId) return;
+            suppressModifiers(e);
+        };
+        const onPointerUpCapture = (e: PointerEvent) => {
+            if (e.pointerId !== suppressedPointerId) return;
+            suppressedPointerId = null;
+            suppressModifiers(e);
+        };
+
+        domNode.addEventListener('pointerdown', onPointerDownCapture, true);
+        domNode.addEventListener('pointermove', onPointerMoveCapture, true);
+        domNode.addEventListener('pointerup', onPointerUpCapture, true);
+        return () => {
+            domNode.removeEventListener('pointerdown', onPointerDownCapture, true);
+            domNode.removeEventListener('pointermove', onPointerMoveCapture, true);
+            domNode.removeEventListener('pointerup', onPointerUpCapture, true);
         };
     }, [isEditorReady, enableColumnSelection]);
 

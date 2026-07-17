@@ -300,6 +300,7 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
         saveFile: fileManager.saveFile,
         saveFileAs: fileManager.saveFileAs,
         reloadFileFromDisk: fileManager.reloadFileFromDisk,
+        revertToBaseline: fileManager.revertToBaseline,
         renameFile: fileManager.renameFile,
         ignoreExternalChange,
 

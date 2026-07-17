@@ -120,14 +120,16 @@ export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: F
     if (!folderPath) {
         return (
             <div className="find-in-files">
-                <div className="find-in-files-header">
+                <div className="file-explorer-header">
                     <span className="file-explorer-title">SEARCH</span>
-                    <button className="file-explorer-action-btn" onClick={onClose} title="Close Search">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <line x1="18" y1="6" x2="6" y2="18"/>
-                            <line x1="6" y1="6" x2="18" y2="18"/>
-                        </svg>
-                    </button>
+                    <div className="file-explorer-actions">
+                        <button className="file-explorer-action-btn" onClick={onClose} title="Close Search">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <div className="find-in-files-empty">
                     <p>Open a folder to search across files.</p>
@@ -139,67 +141,67 @@ export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: F
 
     return (
         <div className="find-in-files">
-            <div className="find-in-files-header">
+            <div className="file-explorer-header">
                 <span className="file-explorer-title">SEARCH</span>
-                <button className="file-explorer-action-btn" onClick={onClose} title="Close Search">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                </button>
-            </div>
-
-            <div className="find-in-files-controls">
-                <div className="find-in-files-input-row">
-                    <input
-                        ref={inputRef}
-                        type="text"
-                        className="find-in-files-input"
-                        placeholder="Search in files… (Enter)"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        autoFocus
-                    />
-                    <button
-                        className="find-in-files-search-btn"
-                        onClick={() => runSearch(query, caseSensitive, wholeWord)}
-                        title="Search (Enter)"
-                        disabled={isSearching}
-                    >
-                        {isSearching ? (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="spinning">
-                                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                            </svg>
-                        ) : (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <circle cx="11" cy="11" r="8"/>
-                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                            </svg>
-                        )}
-                    </button>
-                </div>
-
-                <div className="find-in-files-options">
-                    <button
-                        className={`find-option-btn ${caseSensitive ? 'active' : ''}`}
-                        onClick={() => { const next = !caseSensitive; setCaseSensitive(next); if (query) runSearch(query, next, wholeWord); }}
-                        title="Match Case"
-                    >
-                        Aa
-                    </button>
-                    <button
-                        className={`find-option-btn ${wholeWord ? 'active' : ''}`}
-                        onClick={() => { const next = !wholeWord; setWholeWord(next); if (query) runSearch(query, caseSensitive, next); }}
-                        title="Match Whole Word"
-                    >
+                <div className="file-explorer-actions">
+                    <button className="file-explorer-action-btn" onClick={onClose} title="Close Search">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <polyline points="4 7 4 4 20 4 20 7"/>
-                            <line x1="9" y1="20" x2="15" y2="20"/>
-                            <line x1="12" y1="4" x2="12" y2="20"/>
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
                         </svg>
                     </button>
                 </div>
+            </div>
+
+            <div className="file-explorer-search">
+                <input
+                    ref={inputRef}
+                    type="text"
+                    className="file-explorer-search-input"
+                    placeholder="Search in files… (Enter)"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    autoFocus
+                />
+                <button
+                    className="file-explorer-search-clear"
+                    onClick={() => runSearch(query, caseSensitive, wholeWord)}
+                    title="Search (Enter)"
+                    disabled={isSearching}
+                >
+                    {isSearching ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="spinning">
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                        </svg>
+                    ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <circle cx="11" cy="11" r="8"/>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                        </svg>
+                    )}
+                </button>
+            </div>
+
+            <div className="find-in-files-options-row">
+                <button
+                    className={`file-explorer-search-clear ${caseSensitive ? 'active' : ''}`}
+                    onClick={() => { const next = !caseSensitive; setCaseSensitive(next); if (query) runSearch(query, next, wholeWord); }}
+                    title="Match Case"
+                >
+                    Aa
+                </button>
+                <button
+                    className={`file-explorer-search-clear ${wholeWord ? 'active' : ''}`}
+                    onClick={() => { const next = !wholeWord; setWholeWord(next); if (query) runSearch(query, caseSensitive, next); }}
+                    title="Match Whole Word"
+                >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polyline points="4 7 4 4 20 4 20 7"/>
+                        <line x1="9" y1="20" x2="15" y2="20"/>
+                        <line x1="12" y1="4" x2="12" y2="20"/>
+                    </svg>
+                </button>
             </div>
 
             {searchError && (

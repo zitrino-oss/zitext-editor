@@ -89,6 +89,14 @@ export function useFileManager(
     const tabsRef = useRef(tabs);
     tabsRef.current = tabs;
 
+    // Per-tab "revert baseline": the content the user last intentionally
+    // committed — i.e. the content at open time and after each MANUAL save.
+    // Autosave deliberately does NOT update this, so "Revert File" can discard
+    // recent edits back to the last real save point even when autosave has
+    // already written those edits to disk. (Without this, revert re-read a disk
+    // that autosave kept current, so it appeared to do nothing.)
+    const revertBaselineRef = useRef(new Map<string, string>());
+
     // Cleanup openingFiles when tabs change to ensure the lock is released
     // only after the tab actually appears in the state.
     useEffect(() => {
@@ -97,6 +105,11 @@ export function useFileManager(
             if (tabPaths.has(path)) {
                 openingFiles.current.delete(path);
             }
+        }
+        // Drop revert baselines for tabs that no longer exist.
+        const tabIds = new Set(tabs.map(t => t.id));
+        for (const id of revertBaselineRef.current.keys()) {
+            if (!tabIds.has(id)) revertBaselineRef.current.delete(id);
         }
     }, [tabs]);
 
@@ -187,6 +200,8 @@ export function useFileManager(
             };
 
             endTimer('file-open');
+            // The just-read disk content is the initial revert baseline.
+            revertBaselineRef.current.set(newTab.id, result.content);
             addTab(newTab);
             added = true;
 
@@ -259,7 +274,11 @@ export function useFileManager(
     // Returns true only when the file was actually written to disk. Callers that
     // close the tab on save (e.g. the unsaved-changes dialog) MUST check this so
     // a cancelled Save-As or a write error never silently discards the content.
-    const saveFile = useCallback((tabId: string, contentOverride?: string): Promise<boolean> => {
+    // `isManualSave` distinguishes an explicit user save (Ctrl+S, File > Save,
+    // save-on-close) from an autosave. Only manual saves advance the revert
+    // baseline; autosave passes the default (false) so Revert can still discard
+    // back past autosaved edits.
+    const saveFile = useCallback((tabId: string, contentOverride?: string, isManualSave = false): Promise<boolean> => {
         // A formatter-supplied override is an explicit snapshot, so capture the
         // matching revision now. Ordinary saves intentionally capture both the
         // content and revision only when their queued operation begins.
@@ -337,10 +356,20 @@ export function useFileManager(
                 });
             }
 
+            // A manual save is a new "last committed" point for Revert.
+            if (isManualSave) {
+                revertBaselineRef.current.set(tabId, savedContent);
+            }
+
             await addRecentFile(savePath);
             if (onRecentFilesChanged) await onRecentFilesChanged();
             await rebuildNativeMenu();
-            errorService.showSuccess(`File saved: ${savePath.split(/[\\/]/).pop()}`);
+            // Only announce explicit saves. Autosave runs silently in the
+            // background — its "File saved" toast otherwise popped up on every
+            // focus change (e.g. when opening the File menu to click Revert).
+            if (isManualSave) {
+                errorService.showSuccess(`File saved: ${savePath.split(/[\\/]/).pop()}`);
+            }
             return savedLatestRevision;
         } catch (error) {
             errorService.showError('Failed to save file', error as Error);
@@ -399,6 +428,9 @@ export function useFileManager(
                 },
             });
 
+            // Save As is always an explicit save — reset the revert baseline.
+            revertBaselineRef.current.set(tabId, snapshot.content);
+
             // Unwatch the old path (if any) and start watching the new path.
             if (snapshot.path) {
                 fileWatcher.unwatch(snapshot.path);
@@ -416,14 +448,20 @@ export function useFileManager(
     }, [getTabSaveSnapshot, markTabSaved, markExternallyModified, onRecentFilesChanged]);
 
     /**
-     * Reload file from disk (after external modification)
+     * Reload file from disk (after external modification).
+     * Returns whether the reload actually happened — false means the tab/path
+     * was missing or the user backed out of the dirty-discard confirmation,
+     * so callers can tell "cancelled" apart from "succeeded".
      */
-    const reloadFileFromDisk = useCallback(async (tabId: string): Promise<void> => {
+    const reloadFileFromDisk = useCallback(async (
+        tabId: string,
+        skipDirtyConfirm = false,
+    ): Promise<boolean> => {
         const tab = tabs.find(t => t.id === tabId);
-        if (!tab || !tab.path) return;
+        if (!tab || !tab.path) return false;
 
         try {
-            if (tab.isDirty) {
+            if (tab.isDirty && !skipDirtyConfirm) {
                 const confirmed = await ask(
                     `Reloading "${tab.title}" will discard your unsaved changes. Continue?`,
                     {
@@ -433,7 +471,7 @@ export function useFileManager(
                         cancelLabel: 'Cancel',
                     },
                 );
-                if (!confirmed) return;
+                if (!confirmed) return false;
             }
 
             const result = await readFileContent(tab.path);
@@ -459,11 +497,72 @@ export function useFileManager(
                 exists: true,
                 identity: result.identity,
             });
+            // Reloading from disk accepts the on-disk content as the new
+            // baseline (this path is the external-change "Reload" action).
+            revertBaselineRef.current.set(tabId, result.content);
+            return true;
         } catch (error) {
             console.error('Failed to reload file:', error);
             throw error;
         }
     }, [tabs, updateTab]);
+
+    /**
+     * Revert File: discard edits made since the last intentional save, back to
+     * the tab's revert baseline (content at open / last manual save). Unlike
+     * reloadFileFromDisk this does NOT re-read the current disk — autosave may
+     * have written the very edits we want to drop — and it writes the baseline
+     * back to disk so those autosaved edits are actually undone in the file.
+     * Returns true if it reverted, false if there was nothing to revert to.
+     */
+    const revertToBaseline = useCallback(async (tabId: string): Promise<boolean> => {
+        const tab = tabsRef.current.find(t => t.id === tabId);
+        if (!tab || !tab.path) return false;
+
+        const baseline = revertBaselineRef.current.get(tabId);
+        if (baseline === undefined) {
+            // No baseline captured (shouldn't happen for a saved file) — fall
+            // back to a plain disk reload so the menu action still does something.
+            return reloadFileFromDisk(tabId, true);
+        }
+
+        try {
+            // Overwrite whatever is on disk (expectedVersion=null) with the
+            // baseline, so autosaved edits are removed from the file itself.
+            const writeResult = await writeWithConflictConfirmation(
+                tab.path,
+                baseline,
+                tab.encoding,
+                null,
+            );
+            if (!writeResult) return false;
+
+            updateTab(tabId, {
+                content: baseline,
+                eol: detectEOL(baseline),
+                encoding: writeResult.encoding,
+                diskVersion: {
+                    modified: writeResult.modified,
+                    size: writeResult.size,
+                    hash: writeResult.hash,
+                },
+                isDirty: false,
+                externallyModified: false,
+            });
+
+            fileWatcher.updateVersion(tab.path, {
+                modified: writeResult.modified,
+                size: writeResult.size,
+                exists: true,
+                identity: writeResult.identity,
+            });
+            return true;
+        } catch (error) {
+            console.error('Failed to revert file:', error);
+            throw error;
+        }
+    }, [reloadFileFromDisk, updateTab]);
+
     /**
      * Rename a file on disk and update the tab
      */
@@ -511,6 +610,7 @@ export function useFileManager(
         saveFile,
         saveFileAs,
         reloadFileFromDisk,
+        revertToBaseline,
         renameFile,
     };
 }

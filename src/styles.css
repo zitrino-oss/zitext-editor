@@ -1844,98 +1844,34 @@ body {
   overflow: hidden;
 }
 
-.find-in-files-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color);
-  background-color: var(--bg-tertiary);
-  flex-shrink: 0;
+/* Header and search row are shared with FileExplorer (.file-explorer-header,
+   .file-explorer-search, .file-explorer-search-clear) so the two sidebar
+   panels look and feel identical. .file-explorer-search-clear.active/:disabled
+   below extend that shared class for the case/whole-word toggles and the
+   disabled-while-searching state, which FileExplorer's own "×" button never
+   needed. */
+.file-explorer-search-clear.active {
+  background-color: var(--accent-color);
+  color: white;
 }
 
-.find-in-files-controls {
-  padding: 8px;
-  border-bottom: 1px solid var(--border-color);
-  flex-shrink: 0;
+.file-explorer-search-clear.active:hover {
+  background-color: var(--accent-color);
+  color: white;
 }
 
-.find-in-files-input-row {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-
-.find-in-files-input {
-  flex: 1;
-  padding: 6px 8px;
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  color: var(--text-primary);
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.15s;
-}
-
-.find-in-files-input:focus {
-  border-color: var(--accent-color);
-}
-
-.find-in-files-search-btn {
-  background: none;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-}
-
-.find-in-files-search-btn:hover:not(:disabled) {
-  background-color: var(--bg-tertiary);
-  color: var(--text-primary);
-  border-color: var(--accent-color);
-}
-
-.find-in-files-search-btn:disabled {
+.file-explorer-search-clear:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.find-in-files-options {
+.find-in-files-options-row {
   display: flex;
   gap: 4px;
-  margin-top: 6px;
-}
-
-.find-option-btn {
-  background: none;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 4px 8px;
-  font-size: 12px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-}
-
-.find-option-btn:hover {
-  background-color: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.find-option-btn.active {
-  background-color: var(--accent-color);
-  border-color: var(--accent-color);
-  color: white;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+  flex-shrink: 0;
 }
 
 .find-in-files-summary {
@@ -2609,6 +2545,8 @@ body {
   color: var(--text-primary);
   cursor: pointer;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .s-dropdown-option:hover {
   background: var(--bg-tertiary);

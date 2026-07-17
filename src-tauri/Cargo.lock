@@ -6312,6 +6312,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "url",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

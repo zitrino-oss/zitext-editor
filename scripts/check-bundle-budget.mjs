@@ -10,11 +10,11 @@ const budgets = [
 
 const assets = fs.readdirSync('dist/assets').map(name => {
     const file = path.join('dist/assets', name);
-    return { file, size: fs.statSync(file).size };
+    return { name, file, size: fs.statSync(file).size };
 });
 
 for (const [pattern, maximum, label] of budgets) {
-    const matches = assets.filter(asset => pattern.test(`/${asset.file}`));
+    const matches = assets.filter(asset => pattern.test(`/${asset.name}`));
     if (matches.length !== 1) {
         throw new Error(`Expected exactly one ${label} asset, found ${matches.length}`);
     }

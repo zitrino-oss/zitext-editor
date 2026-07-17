@@ -42,6 +42,15 @@ dirs = "5"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# std's by-handle file identity (volume serial / file index / link count) is
+# still gated behind the unstable `windows_by_handle` feature, so the file
+# identity checks below call the Win32 API directly instead.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 

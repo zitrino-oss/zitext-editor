@@ -689,16 +689,62 @@ fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     left.dev() == right.dev() && left.ino() == right.ino()
 }
 
-#[cfg(windows)]
-fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    left.volume_serial_number() == right.volume_serial_number()
-        && left.file_index() == right.file_index()
-}
-
 #[cfg(not(any(unix, windows)))]
 fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     left.len() == right.len() && left.modified().ok() == right.modified().ok()
+}
+
+// std only exposes by-handle file identity (volume serial number, file index,
+// link count) behind the unstable `windows_by_handle` feature, so the checks
+// below call `GetFileInformationByHandle` directly instead.
+
+#[cfg(windows)]
+fn windows_by_handle_info(
+    handle: std::os::windows::io::RawHandle,
+) -> Option<(u32, u64, u32)> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `handle` is a valid, open file handle for the duration of this
+    // call, and `info` is a correctly-sized writable out-parameter.
+    let ok = unsafe { GetFileInformationByHandle(handle as _, &mut info) };
+    if ok == 0 {
+        return None;
+    }
+    let file_index = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
+    Some((info.dwVolumeSerialNumber, file_index, info.nNumberOfLinks))
+}
+
+/// Opens `path` just far enough to read its by-handle identity, mirroring
+/// what `fs::symlink_metadata`/`fs::metadata` do internally on Windows.
+#[cfg(windows)]
+fn windows_path_identity(
+    path: &std::path::Path,
+    follow_symlinks: bool,
+) -> Option<(u32, u64, u32)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    if !follow_symlinks {
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path).ok()?;
+    windows_by_handle_info(file.as_raw_handle())
+}
+
+#[cfg(windows)]
+fn windows_identity_matches_path(
+    handle: std::os::windows::io::RawHandle,
+    path: &std::path::Path,
+    follow_symlinks: bool,
+) -> bool {
+    let handle_id = windows_by_handle_info(handle).map(|(volume, index, _)| (volume, index));
+    let path_id =
+        windows_path_identity(path, follow_symlinks).map(|(volume, index, _)| (volume, index));
+    handle_id.is_some() && handle_id == path_id
 }
 
 fn open_regular_file(path: &std::path::Path) -> Result<(fs::File, fs::Metadata), String> {
@@ -733,7 +779,14 @@ fn open_regular_file(path: &std::path::Path) -> Result<(fs::File, fs::Metadata),
     if !metadata.file_type().is_file() {
         return Err("Only regular files can be opened".to_string());
     }
-    if !same_file_identity(&entry_metadata, &metadata) {
+    #[cfg(not(windows))]
+    let pre_open_identity_ok = same_file_identity(&entry_metadata, &metadata);
+    #[cfg(windows)]
+    let pre_open_identity_ok = {
+        use std::os::windows::io::AsRawHandle;
+        windows_identity_matches_path(file.as_raw_handle(), path, false)
+    };
+    if !pre_open_identity_ok {
         return Err("File changed during open; retry the operation".to_string());
     }
     // Re-resolve authority after opening and require the directory entry still
@@ -742,9 +795,17 @@ fn open_regular_file(path: &std::path::Path) -> Result<(fs::File, fs::Metadata),
     if !is_authorized(path) {
         return Err("Access denied: file path changed during open".to_string());
     }
+    #[allow(unused_variables)]
     let current_metadata =
         fs::metadata(path).map_err(|e| format!("Failed to revalidate opened file: {e}"))?;
-    if !same_file_identity(&metadata, &current_metadata) {
+    #[cfg(not(windows))]
+    let post_open_identity_ok = same_file_identity(&metadata, &current_metadata);
+    #[cfg(windows)]
+    let post_open_identity_ok = {
+        use std::os::windows::io::AsRawHandle;
+        windows_identity_matches_path(file.as_raw_handle(), path, true)
+    };
+    if !post_open_identity_ok {
         return Err("File changed during open; retry the operation".to_string());
     }
     if metadata.len() > MAX_FILE_SIZE {
@@ -799,7 +860,7 @@ fn read_file_content_sync(validated_path: PathBuf) -> Result<FileReadResult, Str
             encoding: "Windows-1252".to_string(),
             modified,
             hash,
-            identity: file_identity(&metadata),
+            identity: file_identity(&validated_path, &metadata),
         })
     } else {
         dlog!("File decoded successfully as UTF-8");
@@ -809,7 +870,7 @@ fn read_file_content_sync(validated_path: PathBuf) -> Result<FileReadResult, Str
             encoding: "UTF-8".to_string(),
             modified,
             hash,
-            identity: file_identity(&metadata),
+            identity: file_identity(&validated_path, &metadata),
         })
     }
 }
@@ -889,7 +950,7 @@ fn write_file_content_sync(
         size: metadata.len(),
         modified: modified_millis(&metadata).unwrap_or(0),
         hash: content_hash(&bytes),
-        identity: file_identity(&metadata),
+        identity: file_identity(&validated_path, &metadata),
     })
 }
 
@@ -1342,6 +1403,7 @@ fn register_wait_lock(file_path: &str, lock_path: &str) -> Result<(), String> {
     let mut file = options
         .open(&canonical)
         .map_err(|e| format!("Failed to acknowledge --wait lock: {e}"))?;
+    #[cfg_attr(windows, allow(unused_variables))]
     let opened_metadata = file
         .metadata()
         .map_err(|e| format!("Failed to inspect --wait lock: {e}"))?;
@@ -1357,11 +1419,16 @@ fn register_wait_lock(file_path: &str, lock_path: &str) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        if metadata.volume_serial_number() != opened_metadata.volume_serial_number()
-            || metadata.file_index() != opened_metadata.file_index()
-            || opened_metadata.number_of_links() != 1
-        {
+        use std::os::windows::io::AsRawHandle;
+        let pre_open = windows_path_identity(&lock, false);
+        let opened = windows_by_handle_info(file.as_raw_handle());
+        let identity_ok = match (pre_open, opened) {
+            (Some((pre_volume, pre_index, _)), Some((open_volume, open_index, links))) => {
+                pre_volume == open_volume && pre_index == open_index && links == 1
+            }
+            _ => false,
+        };
+        if !identity_ok {
             return Err("--wait lock changed during validation".to_string());
         }
     }
@@ -1388,7 +1455,13 @@ fn signal_tab_closed(path: String) -> Result<(), String> {
     let locks = WAIT_LOCKS.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     if let Ok(mut map) = locks.lock() {
         if let Some(lock_paths) = map.remove(&path) {
-            let temp = std::env::temp_dir().canonicalize().ok();
+            // Stored lock paths went through `clean_path` (which strips the
+            // Windows `\\?\` verbatim prefix); normalize `temp` the same way
+            // so the `starts_with` check below can actually match.
+            let temp = std::env::temp_dir()
+                .canonicalize()
+                .ok()
+                .map(|p| PathBuf::from(clean_path(p)));
             for lock_path in lock_paths {
                 // register_wait_lock already canonicalized and validated these;
                 // retain a final temp-directory check before deletion.
@@ -1409,7 +1482,12 @@ fn cleanup_wait_locks() {
     let Ok(mut map) = locks.lock() else {
         return;
     };
-    let temp = std::env::temp_dir().canonicalize().ok();
+    // See the matching comment in `signal_tab_closed`: normalize the same way
+    // `clean_path` normalized the stored lock paths.
+    let temp = std::env::temp_dir()
+        .canonicalize()
+        .ok()
+        .map(|p| PathBuf::from(clean_path(p)));
     for lock_path in map.drain().flat_map(|(_, paths)| paths) {
         let lock = PathBuf::from(&lock_path);
         if temp.as_ref().is_some_and(|root| lock.starts_with(root)) {
@@ -1674,23 +1752,24 @@ fn modified_millis(metadata: &fs::Metadata) -> Option<u64> {
 }
 
 #[cfg(unix)]
-fn file_identity(metadata: &fs::Metadata) -> String {
+fn file_identity(_path: &std::path::Path, metadata: &fs::Metadata) -> String {
     use std::os::unix::fs::MetadataExt;
     format!("{}:{}", metadata.dev(), metadata.ino())
 }
 
+// std does not expose by-handle identity (volume serial / file index) on
+// stable Rust (see `windows_by_handle_info` above), so this reopens the path
+// to read it via `GetFileInformationByHandle` directly.
 #[cfg(windows)]
-fn file_identity(metadata: &fs::Metadata) -> String {
-    use std::os::windows::fs::MetadataExt;
-    format!(
-        "{}:{}",
-        metadata.volume_serial_number().unwrap_or(0),
-        metadata.file_index().unwrap_or(0)
-    )
+fn file_identity(path: &std::path::Path, _metadata: &fs::Metadata) -> String {
+    match windows_path_identity(path, true) {
+        Some((volume, index, _)) => format!("{volume}:{index}"),
+        None => String::new(),
+    }
 }
 
 #[cfg(not(any(unix, windows)))]
-fn file_identity(_metadata: &fs::Metadata) -> String {
+fn file_identity(_path: &std::path::Path, _metadata: &fs::Metadata) -> String {
     String::new()
 }
 
@@ -1718,7 +1797,7 @@ async fn get_file_metadata(path: String) -> Result<FileMetadata, String> {
             .ok_or_else(|| "Failed to get modification time".to_string())?,
         size: metadata.len(),
         exists: true,
-        identity: file_identity(&metadata),
+        identity: file_identity(&validated_path, &metadata),
     })
 }
 
@@ -1750,7 +1829,7 @@ async fn get_files_metadata(paths: Vec<String>) -> Result<Vec<FileMetadataWithPa
                         modified,
                         size: metadata.len(),
                         exists: true,
-                        identity: file_identity(&metadata),
+                        identity: file_identity(&validated_path, &metadata),
                     });
                 }
             }
@@ -2142,70 +2221,21 @@ struct FileSearchMatch {
     match_end: u32,
 }
 
-const TEXT_EXTENSIONS: &[&str] = &[
-    "txt",
-    "md",
-    "rs",
-    "ts",
-    "tsx",
-    "js",
-    "jsx",
-    "py",
-    "java",
-    "c",
-    "cpp",
-    "h",
-    "hpp",
-    "cs",
-    "go",
-    "rb",
-    "php",
-    "swift",
-    "kt",
-    "scala",
-    "r",
-    "lua",
-    "perl",
-    "sh",
-    "bash",
-    "zsh",
-    "fish",
-    "ps1",
-    "bat",
-    "cmd",
-    "html",
-    "css",
-    "scss",
-    "sass",
-    "less",
-    "json",
-    "xml",
-    "yaml",
-    "yml",
-    "toml",
-    "ini",
-    "cfg",
-    "conf",
-    "env",
-    "sql",
-    "graphql",
-    "gql",
-    "dockerfile",
-    "makefile",
-    "cmake",
-    "mk",
-    "gitignore",
-    "lock",
-    "log",
-    "csv",
-    "tsv",
-    "tex",
-    "rst",
-    "adoc",
-    "vue",
-    "svelte",
-    "astro",
-    "mdx",
+// Extensions that are essentially never valid UTF-8 text, skipped up front
+// purely to avoid opening/reading them. This is a performance shortcut, not
+// the correctness check — `search_file` already caps file size and validates
+// UTF-8 before searching, so a plain-text file with an unusual or missing
+// extension (a README with no extension, "Dockerfile.dev", a file named just
+// "90") is still searched instead of being silently skipped for not matching
+// a curated allow-list of "known" text extensions.
+const BINARY_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "tiff", "tif", "avif", "heic",
+    "mp3", "mp4", "wav", "avi", "mov", "mkv", "flac", "ogg", "webm", "m4a", "m4v",
+    "zip", "tar", "gz", "tgz", "7z", "rar", "bz2", "xz", "zst",
+    "exe", "dll", "so", "dylib", "bin", "obj", "o", "a", "lib", "class", "pyc", "pyd", "wasm",
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+    "ttf", "otf", "woff", "woff2", "eot",
+    "db", "sqlite", "sqlite3", "pdb", "iso", "img", "dmg", "node",
 ];
 
 fn is_text_file(path: &std::path::Path) -> bool {
@@ -2215,27 +2245,7 @@ fn is_text_file(path: &std::path::Path) -> bool {
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
 
-    if ext.is_empty() {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        return matches!(
-            name.as_str(),
-            "makefile"
-                | "dockerfile"
-                | "readme"
-                | "license"
-                | "todo"
-                | ".env"
-                | ".gitignore"
-                | ".gitattributes"
-                | ".editorconfig"
-        );
-    }
-
-    TEXT_EXTENSIONS.contains(&ext.as_str())
+    !BINARY_EXTENSIONS.contains(&ext.as_str())
 }
 
 struct SearchOptions<'a> {
@@ -3244,5 +3254,41 @@ mod tests {
 
         signal_tab_closed(document_path).unwrap();
         assert!(!lock_path.exists());
+    }
+
+    #[test]
+    fn find_in_files_searches_extensionless_and_unrecognized_files() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        // search_file opens each candidate through open_regular_file, which
+        // requires an active grant — mirroring what search_in_files's own
+        // authorize_path(&folder) call does for the real command.
+        grant_folder(directory.path());
+        // No extension at all (e.g. a file literally named "90").
+        fs::write(directory.path().join("90"), b"Windows itself does not have a Command Palette")
+            .expect("write extensionless fixture");
+        // An extension nobody bothered to curate into an allow-list.
+        fs::write(directory.path().join("notes.qux"), b"Windows compatibility notes")
+            .expect("write unrecognized-extension fixture");
+        // A real binary format must still be skipped.
+        fs::write(directory.path().join("icon.png"), b"Windows\0\x89PNG\r\n")
+            .expect("write binary fixture");
+
+        let options = SearchOptions {
+            query: "Windows",
+            case_sensitive: false,
+            whole_word: false,
+            max_results: 100,
+        };
+        let mut results = Vec::new();
+        let mut budget = SearchBudget::new();
+        search_dir_recursive(directory.path(), &options, &mut results, 0, &mut budget);
+
+        let searched: std::collections::HashSet<_> = results
+            .iter()
+            .map(|m| m.file_path.clone())
+            .collect();
+        assert!(searched.iter().any(|p| p.ends_with("90")));
+        assert!(searched.iter().any(|p| p.ends_with("notes.qux")));
+        assert!(!searched.iter().any(|p| p.ends_with("icon.png")));
     }
 }
