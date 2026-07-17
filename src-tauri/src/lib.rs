@@ -356,8 +356,8 @@ fn clean_path(path: PathBuf) -> String {
     let path_str = path.to_string_lossy().to_string();
     #[cfg(windows)]
     {
-        if path_str.starts_with(r"\\?\") {
-            return path_str[4..].to_string();
+        if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+            return stripped.to_string();
         }
     }
     path_str
@@ -699,9 +699,7 @@ fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
 // below call `GetFileInformationByHandle` directly instead.
 
 #[cfg(windows)]
-fn windows_by_handle_info(
-    handle: std::os::windows::io::RawHandle,
-) -> Option<(u32, u64, u32)> {
+fn windows_by_handle_info(handle: std::os::windows::io::RawHandle) -> Option<(u32, u64, u32)> {
     use windows_sys::Win32::Storage::FileSystem::{
         GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
     };
@@ -719,10 +717,7 @@ fn windows_by_handle_info(
 /// Opens `path` just far enough to read its by-handle identity, mirroring
 /// what `fs::symlink_metadata`/`fs::metadata` do internally on Windows.
 #[cfg(windows)]
-fn windows_path_identity(
-    path: &std::path::Path,
-    follow_symlinks: bool,
-) -> Option<(u32, u64, u32)> {
+fn windows_path_identity(path: &std::path::Path, follow_symlinks: bool) -> Option<(u32, u64, u32)> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
@@ -2229,13 +2224,11 @@ struct FileSearchMatch {
 // "90") is still searched instead of being silently skipped for not matching
 // a curated allow-list of "known" text extensions.
 const BINARY_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "tiff", "tif", "avif", "heic",
-    "mp3", "mp4", "wav", "avi", "mov", "mkv", "flac", "ogg", "webm", "m4a", "m4v",
-    "zip", "tar", "gz", "tgz", "7z", "rar", "bz2", "xz", "zst",
-    "exe", "dll", "so", "dylib", "bin", "obj", "o", "a", "lib", "class", "pyc", "pyd", "wasm",
-    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-    "ttf", "otf", "woff", "woff2", "eot",
-    "db", "sqlite", "sqlite3", "pdb", "iso", "img", "dmg", "node",
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "tiff", "tif", "avif", "heic", "mp3", "mp4",
+    "wav", "avi", "mov", "mkv", "flac", "ogg", "webm", "m4a", "m4v", "zip", "tar", "gz", "tgz",
+    "7z", "rar", "bz2", "xz", "zst", "exe", "dll", "so", "dylib", "bin", "obj", "o", "a", "lib",
+    "class", "pyc", "pyd", "wasm", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "ttf",
+    "otf", "woff", "woff2", "eot", "db", "sqlite", "sqlite3", "pdb", "iso", "img", "dmg", "node",
 ];
 
 fn is_text_file(path: &std::path::Path) -> bool {
@@ -3264,11 +3257,17 @@ mod tests {
         // authorize_path(&folder) call does for the real command.
         grant_folder(directory.path());
         // No extension at all (e.g. a file literally named "90").
-        fs::write(directory.path().join("90"), b"Windows itself does not have a Command Palette")
-            .expect("write extensionless fixture");
+        fs::write(
+            directory.path().join("90"),
+            b"Windows itself does not have a Command Palette",
+        )
+        .expect("write extensionless fixture");
         // An extension nobody bothered to curate into an allow-list.
-        fs::write(directory.path().join("notes.qux"), b"Windows compatibility notes")
-            .expect("write unrecognized-extension fixture");
+        fs::write(
+            directory.path().join("notes.qux"),
+            b"Windows compatibility notes",
+        )
+        .expect("write unrecognized-extension fixture");
         // A real binary format must still be skipped.
         fs::write(directory.path().join("icon.png"), b"Windows\0\x89PNG\r\n")
             .expect("write binary fixture");
@@ -3283,10 +3282,8 @@ mod tests {
         let mut budget = SearchBudget::new();
         search_dir_recursive(directory.path(), &options, &mut results, 0, &mut budget);
 
-        let searched: std::collections::HashSet<_> = results
-            .iter()
-            .map(|m| m.file_path.clone())
-            .collect();
+        let searched: std::collections::HashSet<_> =
+            results.iter().map(|m| m.file_path.clone()).collect();
         assert!(searched.iter().any(|p| p.ends_with("90")));
         assert!(searched.iter().any(|p| p.ends_with("notes.qux")));
         assert!(!searched.iter().any(|p| p.ends_with("icon.png")));
