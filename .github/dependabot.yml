@@ -9,12 +9,17 @@ updates:
     labels:
       - "dependencies"
       - "javascript"
-    # Collapse all minor/patch bumps into a single PR; majors stay separate
-    # so breaking changes still get individual review.
+    # Collapse updates into as few PRs as possible: one grouped PR for
+    # minor/patch and one for majors. Majors are kept in their own group so a
+    # single breaking major can't hold back the (usually safe) minor/patch PR.
+    # (Security updates are still raised by Dependabot as individual PRs.)
     groups:
       npm-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+      npm-major:
+        patterns: ["*"]
+        update-types: ["major"]
     ignore:
       # Hold TypeScript at 6.x. TS 7 is not supported by any stable
       # @typescript-eslint release (peer: "typescript >=4.8.4 <6.1.0"), so a
@@ -22,13 +27,12 @@ updates:
       # load. Remove this once typescript-eslint ships stable TS 7 support.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
-      # TEMPORARY: vite 8.1.5 bundles rolldown 1.1.5, which regressed
+      # TEMPORARY: vite 8.1.4+ bundles rolldown 1.1.4+, which regressed
       # resolution of the `monaco-editor/...editor.worker?worker` import and
-      # breaks `vite build` (PR #58). Pin out just the bad version so the
-      # grouped bump can still land the other updates; a fixed release
-      # (8.1.6+) will flow through normally. Remove once confirmed fixed.
+      # breaks `vite build` (PRs #58, #62 — 8.1.4 and 8.1.5 both fail). Hold at
+      # the last-good 8.1.3 until a fixed release lands. Remove once confirmed.
       - dependency-name: "vite"
-        versions: ["8.1.5"]
+        versions: [">= 8.1.4"]
 
   # Rust backend dependencies (Cargo)
   - package-ecosystem: "cargo"
@@ -43,6 +47,16 @@ updates:
       cargo-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+      cargo-major:
+        patterns: ["*"]
+        update-types: ["major"]
+    ignore:
+      # TEMPORARY: sha2 0.11 is a breaking API change — the RustCrypto 0.11
+      # line changed the digest output type, which no longer implements
+      # `LowerHex`, breaking our hex formatting (PR #63). Hold at 0.10.x until
+      # the hashing code is migrated to the 0.11 API. Then remove this entry.
+      - dependency-name: "sha2"
+        versions: [">= 0.11"]
 
   # GitHub Actions used in workflows
   - package-ecosystem: "github-actions"
