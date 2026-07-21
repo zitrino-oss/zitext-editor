@@ -27,12 +27,28 @@ updates:
       # load. Remove this once typescript-eslint ships stable TS 7 support.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
-      # TEMPORARY: vite 8.1.4+ bundles rolldown 1.1.4+, which regressed
-      # resolution of the `monaco-editor/...editor.worker?worker` import and
-      # breaks `vite build` (PRs #58, #62 — 8.1.4 and 8.1.5 both fail). Hold at
-      # the last-good 8.1.3 until a fixed release lands. Remove once confirmed.
+      # TEMPORARY: monaco-editor 0.56 changed its package `exports` map
+      # (`"./*": "./*"` → `"./*": "./esm/vs/*.js"`), so the deep worker import
+      # `monaco-editor/esm/vs/editor/editor.worker?worker` in src/monaco-config.ts
+      # no longer resolves and `vite build` fails (PRs #58/#62/#69). Hold at
+      # 0.55.x until src/monaco-config.ts is migrated to the 0.56 import path.
+      - dependency-name: "monaco-editor"
+        versions: [">= 0.56"]
+      # TEMPORARY (precautionary): vite held at the last-good 8.1.3. The build
+      # break above was confirmed to be monaco, not vite, but 8.1.4/8.1.5 were
+      # never verified in isolation. Safe to drop once monaco is unblocked and
+      # vite is confirmed green.
       - dependency-name: "vite"
         versions: [">= 8.1.4"]
+      # TEMPORARY: eslint 10 + eslint-plugin-react-hooks 7 majors produce 48
+      # lint errors (flat-config / rule changes) and need a lint migration
+      # (PR #71). Hold the eslint family at v9/v5 until migrated together.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-plugin-react-hooks"
+        update-types: ["version-update:semver-major"]
 
   # Rust backend dependencies (Cargo)
   - package-ecosystem: "cargo"
