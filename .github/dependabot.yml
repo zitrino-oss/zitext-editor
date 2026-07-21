@@ -22,6 +22,13 @@ updates:
       # load. Remove this once typescript-eslint ships stable TS 7 support.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # TEMPORARY: vite 8.1.5 bundles rolldown 1.1.5, which regressed
+      # resolution of the `monaco-editor/...editor.worker?worker` import and
+      # breaks `vite build` (PR #58). Pin out just the bad version so the
+      # grouped bump can still land the other updates; a fixed release
+      # (8.1.6+) will flow through normally. Remove once confirmed fixed.
+      - dependency-name: "vite"
+        versions: ["8.1.5"]
 
   # Rust backend dependencies (Cargo)
   - package-ecosystem: "cargo"
