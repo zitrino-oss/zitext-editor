@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Unsaved-changes dialog buttons no longer overlap (added spacing to the action row).
 - Files open from the Explorer noticeably faster — the native-menu rebuild is now deferred until after the document renders instead of blocking it.
+- Closed renderer path-grant escalation through recent files, project settings, and recovery sessions.
+- Made saves atomic, encoding-preserving, revision-aware, and protected against overwriting a newer on-disk version.
+- Isolated Monaco models and undo history per tab and restored production language-service workers.
+- Made JSON/XML formatting lossless for large numbers, special keys, mixed content, CDATA, and quoted delimiters.
+- Repaired CLI paths with spaces, secondary-instance folders, and `--wait` handshakes.
+- Added frontend and Rust regression tests plus strict TypeScript, ESLint, rustfmt, Clippy, and test gates in CI.
+
+### Security
+- Moved session-restore consent to a native one-shot prompt and narrowed Tauri capabilities.
+- Added backend payload budgets, regular-file enforcement, native close tokens, safe rename semantics, and immutable pinned CI actions.
+- Production releases now require signing verification on every platform, immutable tags, serialized publication, and monotonically increasing update metadata.
 
 ## [2.1.4]
 
@@ -59,6 +70,7 @@ Initial public release baseline. Highlights:
 - Light/dark themes that follow the OS theme on first launch
 - Update notifications with one-click download from the website
 
-[Unreleased]: https://github.com/zitrino-oss/zitext-editor/compare/v2.1.3...HEAD
+[Unreleased]: https://github.com/zitrino-oss/zitext-editor/compare/v2.1.4...HEAD
+[2.1.4]: https://github.com/zitrino-oss/zitext-editor/releases/tag/v2.1.4
 [2.1.3]: https://github.com/zitrino-oss/zitext-editor/releases/tag/v2.1.3
 [2.1.2]: https://github.com/zitrino-oss/zitext-editor/releases/tag/v2.1.2

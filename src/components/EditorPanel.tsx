@@ -5,6 +5,7 @@ import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import '../monaco-config'; // Configure Monaco workers
 
 interface EditorPanelProps {
+    modelPath: string;
     content: string;
     language: string;
     editorTheme: string;
@@ -18,12 +19,15 @@ interface EditorPanelProps {
     insertSpaces: boolean;
     cursorLine: number;
     cursorColumn: number;
+    scrollTop: number;
+    scrollLeft: number;
     /** Custom keybinding string for Find (e.g. "Ctrl+F"). If omitted, uses Ctrl/Cmd+F. */
     findKeybinding?: string;
     /** Custom keybinding string for Find & Replace (e.g. "Ctrl+H"). If omitted, uses Ctrl/Cmd+H. */
     replaceKeybinding?: string;
     onChange: (value: string) => void;
     onCursorChange: (line: number, column: number) => void;
+    onScrollChange?: (scrollTop: number, scrollLeft: number) => void;
     onSelectionChange?: (selectionLength: number) => void;
     onEditorReady?: (editor: editor.IStandaloneCodeEditor) => void;
     onFocus?: () => void;
@@ -110,6 +114,7 @@ function parseMonacoKey(binding: string, monaco: Monaco): number | null {
 }
 
 export function EditorPanel({
+    modelPath,
     content,
     language,
     editorTheme,
@@ -118,14 +123,18 @@ export function EditorPanel({
     wordWrap,
     showMinimap,
     isReadOnly,
+    enableColumnSelection,
     tabSize,
     insertSpaces,
     cursorLine,
     cursorColumn,
+    scrollTop,
+    scrollLeft,
     findKeybinding,
     replaceKeybinding,
     onChange,
     onCursorChange,
+    onScrollChange,
     onSelectionChange,
     onEditorReady,
     onFocus,
@@ -138,6 +147,16 @@ export function EditorPanel({
     const activeFindKeyRef = useRef<number | null>(null);
     const activeReplaceKeyRef = useRef<number | null>(null);
     const [isEditorReady, setIsEditorReady] = useState(false);
+    const onCursorChangeRef = useRef(onCursorChange);
+    const onScrollChangeRef = useRef(onScrollChange);
+    const onSelectionChangeRef = useRef(onSelectionChange);
+    const onEditorReadyRef = useRef(onEditorReady);
+    const onFocusRef = useRef(onFocus);
+    onCursorChangeRef.current = onCursorChange;
+    onScrollChangeRef.current = onScrollChange;
+    onSelectionChangeRef.current = onSelectionChange;
+    onEditorReadyRef.current = onEditorReady;
+    onFocusRef.current = onFocus;
 
     // True while the user is holding the mouse button inside the editor.
     // The cursor-sync useEffect checks this flag and skips setPosition() while a drag is
@@ -146,52 +165,82 @@ export function EditorPanel({
     // collapsing the selection and making it impossible to select more than a line or two.
     const isDraggingRef = useRef(false);
 
-    // Force-tokenize all lines after language changes or on initial mount.
-    // Monaco's background tokenizer processes lines lazily in small batches to stay
-    // responsive; on larger files this leaves some lines un-highlighted until scrolled.
-    // forceTokenization() runs synchronously up to the given line number, ensuring
-    // the full file is highlighted as soon as the editor (or language) is ready.
-    useEffect(() => {
-        if (!isEditorReady || !editorRef.current) return;
-        const model = editorRef.current.getModel();
-        if (!model) return;
-        // Defer one frame so Monaco finishes its own language-switch bookkeeping first.
-        const raf = requestAnimationFrame(() => {
-            if (!model.isDisposed()) {
-                // forceTokenization is part of Monaco's internal API not in public typedefs
-                (model as unknown as { forceTokenization(line: number): void })
-                    .forceTokenization(model.getLineCount());
-            }
-        });
-        return () => cancelAnimationFrame(raf);
-    }, [isEditorReady, language]);
+    // The last cursor position the editor itself emitted via onDidChangeCursorPosition.
+    // Because cursorLine/cursorColumn are fed straight back from that callback, every
+    // keystroke round-trips through props into the cursor-sync effect below. Comparing
+    // incoming props against this ref lets us ignore those echoes and only re-position
+    // Monaco for genuinely external changes (Go To Line, session restore).
+    const lastEmittedPosRef = useRef<{ line: number; column: number } | null>(null);
 
-    // Wire up the drag-detection listeners once the editor DOM node is available.
-    // Also toggles columnSelection based on Alt key so Alt+drag = column select,
-    // normal drag = normal selection.
+    // Wire up drag-detection listeners once the editor DOM node is available.
+    // isDraggingRef feeds the cursor-sync guard further below, unrelated to
+    // column selection.
     useEffect(() => {
         if (!isEditorReady || !editorRef.current) return;
         const domNode = editorRef.current.getDomNode();
         if (!domNode) return;
         const onMouseDown = () => { isDraggingRef.current = true; };
         const onMouseUp   = () => { isDraggingRef.current = false; };
-        const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Alt') editorRef.current?.updateOptions({ columnSelection: true });
-        };
-        const onKeyUp = (e: KeyboardEvent) => {
-            if (e.key === 'Alt') editorRef.current?.updateOptions({ columnSelection: false });
-        };
         domNode.addEventListener('mousedown', onMouseDown);
         window.addEventListener('mouseup', onMouseUp);   // global — catches release anywhere
-        window.addEventListener('keydown', onKeyDown);
-        window.addEventListener('keyup', onKeyUp);
         return () => {
             domNode.removeEventListener('mousedown', onMouseDown);
             window.removeEventListener('mouseup', onMouseUp);
-            window.removeEventListener('keydown', onKeyDown);
-            window.removeEventListener('keyup', onKeyUp);
         };
     }, [isEditorReady]);
+
+    // Monaco's own mouse handling makes Alt+Shift+Drag a rectangular block
+    // selection unconditionally — that decision is hardcoded off each raw
+    // pointer event's modifier keys (see its internal viewController's
+    // dispatchMouse, re-read on every pointerdown AND every subsequent
+    // pointermove of the drag) and never consults the `columnSelection`
+    // editor option, so there is no built-in option that gates this gesture.
+    // To make the "Column Selection" setting actually control it, capture
+    // pointerdown/pointermove/pointerup in the capture phase — before
+    // Monaco's own listener (bound in the bubble phase on an inner view
+    // node) ever sees them — and, only when the setting is off and only for
+    // the duration of a drag that started as Alt+Shift, shadow altKey/
+    // shiftKey to false on the same live event (rather than canceling and
+    // replaying a synthetic one) so Monaco's pointer-capture handling keeps
+    // working undisturbed and resolves the gesture as an ordinary drag-select.
+    useEffect(() => {
+        if (!isEditorReady || !editorRef.current || enableColumnSelection) return;
+        const domNode = editorRef.current.getDomNode();
+        if (!domNode) return;
+
+        // The pointerId currently being suppressed, or null when no
+        // Alt+Shift-drag is in progress.
+        let suppressedPointerId: number | null = null;
+
+        const suppressModifiers = (e: PointerEvent) => {
+            Object.defineProperty(e, 'altKey', { get: () => false, configurable: true });
+            Object.defineProperty(e, 'shiftKey', { get: () => false, configurable: true });
+        };
+
+        const onPointerDownCapture = (e: PointerEvent) => {
+            if (e.button !== 0 || !e.altKey || !e.shiftKey) return;
+            suppressedPointerId = e.pointerId;
+            suppressModifiers(e);
+        };
+        const onPointerMoveCapture = (e: PointerEvent) => {
+            if (e.pointerId !== suppressedPointerId) return;
+            suppressModifiers(e);
+        };
+        const onPointerUpCapture = (e: PointerEvent) => {
+            if (e.pointerId !== suppressedPointerId) return;
+            suppressedPointerId = null;
+            suppressModifiers(e);
+        };
+
+        domNode.addEventListener('pointerdown', onPointerDownCapture, true);
+        domNode.addEventListener('pointermove', onPointerMoveCapture, true);
+        domNode.addEventListener('pointerup', onPointerUpCapture, true);
+        return () => {
+            domNode.removeEventListener('pointerdown', onPointerDownCapture, true);
+            domNode.removeEventListener('pointermove', onPointerMoveCapture, true);
+            domNode.removeEventListener('pointerup', onPointerUpCapture, true);
+        };
+    }, [isEditorReady, enableColumnSelection]);
 
     useEffect(() => {
         if (!isEditorReady || !editorRef.current || !monacoRef.current) return;
@@ -225,21 +274,37 @@ export function EditorPanel({
             window.dispatchEvent(new CustomEvent('zitext-replace'));
         });
         activeReplaceKeyRef.current = newReplaceKey;
+
+        // Suppress Monaco's built-in "Go to Line" widget (editor.action.gotoLine,
+        // bound to Ctrl/Cmd+G). The app's global keydown handler already opens our
+        // custom GoToLineModal on this chord; without this no-op override both the
+        // native widget and the modal appear at once.
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyG, () => { /* no-op */ });
     }, [isEditorReady, findKeybinding, replaceKeybinding]);
 
     useEffect(() => {
         if (!editorRef.current) return;
-        // If this prop update is just the editor's own position echoed back through
-        // state, skip it — calling setPosition() here would collapse the user's
         // Never call setPosition() while the mouse is held in the editor.
         // The state/prop round-trip lags behind Monaco's actual position during a
         // drag-select, so a stale prop would collapse the in-progress selection.
         if (isDraggingRef.current) return;
+        // Skip echoes of the editor's own cursor movements. Typing fires
+        // onDidChangeCursorPosition, which flows back here as new props one render
+        // later; re-applying that value with setPosition() is what yanked the caret
+        // away from where the user was typing. The props only differ from the last
+        // emitted position for genuinely external changes (Go To Line, restore).
+        const last = lastEmittedPosRef.current;
+        if (last && last.line === cursorLine && last.column === cursorColumn) return;
         const pos = editorRef.current.getPosition();
         if (pos && pos.lineNumber === cursorLine && pos.column === cursorColumn) return;
         editorRef.current.setPosition({ lineNumber: cursorLine, column: cursorColumn });
         editorRef.current.revealLineInCenterIfOutsideViewport(cursorLine);
     }, [cursorLine, cursorColumn]);
+
+    useEffect(() => {
+        if (!editorRef.current) return;
+        editorRef.current.setScrollPosition({ scrollTop, scrollLeft });
+    }, [modelPath, scrollTop, scrollLeft]);
 
     const handleEditorWillMount = (monaco: Monaco) => {
         monacoRef.current = monaco;
@@ -260,35 +325,41 @@ export function EditorPanel({
         setIsEditorReady(true);
 
         editor.setPosition({ lineNumber: cursorLine, column: cursorColumn });
+        editor.setScrollPosition({ scrollTop, scrollLeft });
 
         editor.onDidChangeCursorPosition((e) => {
-            onCursorChange(e.position.lineNumber, e.position.column);
+            // Remember what we emit so the cursor-sync effect can tell this echo
+            // apart from an external position change (see lastEmittedPosRef).
+            lastEmittedPosRef.current = { line: e.position.lineNumber, column: e.position.column };
+            onCursorChangeRef.current(e.position.lineNumber, e.position.column);
+        });
+
+        editor.onDidScrollChange((event) => {
+            if (event.scrollTopChanged || event.scrollLeftChanged) {
+                onScrollChangeRef.current?.(event.scrollTop, event.scrollLeft);
+            }
         });
 
         // Track selection length
-        if (onSelectionChange) {
+        if (onSelectionChangeRef.current) {
             editor.onDidChangeCursorSelection(() => {
                 const selection = editor.getSelection();
                 if (selection && !selection.isEmpty()) {
                     const model = editor.getModel();
                     if (model) {
                         const text = model.getValueInRange(selection);
-                        onSelectionChange(text.length);
+                        onSelectionChangeRef.current?.(text.length);
                     }
                 } else {
-                    onSelectionChange(0);
+                    onSelectionChangeRef.current?.(0);
                 }
             });
         }
 
         // Track focus
-        if (onFocus) {
-            editor.onDidFocusEditorText(onFocus);
-        }
+        editor.onDidFocusEditorText(() => onFocusRef.current?.());
 
-        if (onEditorReady) {
-            onEditorReady(editor);
-        }
+        onEditorReadyRef.current?.(editor);
 
         // Route clipboard actions through the Tauri clipboard plugin. Monaco's built-in
         // context-menu Copy/Cut/Paste rely on document.execCommand, which the Windows
@@ -344,7 +415,7 @@ export function EditorPanel({
         // editor context menu in monaco-config.ts, so only these WebView2-safe ones show.
 
         editor.focus();
-    }, [cursorLine, cursorColumn, onCursorChange, onSelectionChange, onFocus, onEditorReady]);
+    }, [cursorLine, cursorColumn, scrollTop, scrollLeft]);
 
     function handleEditorChange(value: string | undefined) {
         if (value !== undefined) {
@@ -356,6 +427,7 @@ export function EditorPanel({
         <div className="editor-panel">
             <Editor
                 height="100%"
+                path={modelPath}
                 language={language}
                 value={content}
                 theme={editorTheme}
@@ -372,6 +444,11 @@ export function EditorPanel({
                     scrollBeyondLastLine: false,
                     automaticLayout: true,
                     renderLineHighlight: 'all',
+                    // Don't box the word under the cursor or auto-highlight text
+                    // matching the current selection — users found the word-box
+                    // distracting while typing.
+                    occurrencesHighlight: 'off',
+                    selectionHighlight: false,
                     cursorBlinking: 'smooth',
                     smoothScrolling: true,
                     contextmenu: true,

@@ -3,6 +3,7 @@ import { EditorPanel } from './EditorPanel';
 import { MarkdownPreview } from './MarkdownPreview';
 import type { Tab, Settings } from '../types';
 import type { editor } from 'monaco-editor';
+import { modelUriForTab } from '../utils/editorModels';
 
 interface SplitViewProps {
     leftTab: Tab;
@@ -14,6 +15,8 @@ interface SplitViewProps {
     onRightChange: (content: string) => void;
     onLeftCursorChange: (line: number, column: number) => void;
     onRightCursorChange: (line: number, column: number) => void;
+    onLeftScrollChange: (scrollTop: number, scrollLeft: number) => void;
+    onRightScrollChange: (scrollTop: number, scrollLeft: number) => void;
     onLeftSelectionChange?: (length: number) => void;
     onRightSelectionChange?: (length: number) => void;
     onLeftEditorReady: (editor: editor.IStandaloneCodeEditor | null) => void;
@@ -35,6 +38,8 @@ export function SplitView({
     onRightChange,
     onLeftCursorChange,
     onRightCursorChange,
+    onLeftScrollChange,
+    onRightScrollChange,
     onLeftSelectionChange,
     onRightSelectionChange,
     onLeftEditorReady,
@@ -84,6 +89,7 @@ export function SplitView({
                     <MarkdownPreview content={leftTab.content} theme={settings.theme} />
                 ) : (
                     <EditorPanel
+                        modelPath={modelUriForTab(leftTab.id)}
                         content={leftTab.content}
                         language={leftTab.language}
                         editorTheme={settings.editorTheme}
@@ -97,10 +103,13 @@ export function SplitView({
                         insertSpaces={settings.insertSpaces}
                         cursorLine={leftTab.cursorLine}
                         cursorColumn={leftTab.cursorColumn}
+                        scrollTop={leftTab.scrollTop}
+                        scrollLeft={leftTab.scrollLeft}
                         findKeybinding={findKeybinding}
                         replaceKeybinding={replaceKeybinding}
                         onChange={onLeftChange}
                         onCursorChange={onLeftCursorChange}
+                        onScrollChange={onLeftScrollChange}
                         onSelectionChange={onLeftSelectionChange}
                         onEditorReady={onLeftEditorReady}
                         onFocus={onLeftFocus}
@@ -123,6 +132,7 @@ export function SplitView({
                             <MarkdownPreview content={rightTab.content} theme={settings.theme} />
                         ) : (
                             <EditorPanel
+                                modelPath={modelUriForTab(rightTab.id)}
                                 content={rightTab.content}
                                 language={rightTab.language}
                                 editorTheme={settings.editorTheme}
@@ -136,10 +146,13 @@ export function SplitView({
                                 insertSpaces={settings.insertSpaces}
                                 cursorLine={rightTab.cursorLine}
                                 cursorColumn={rightTab.cursorColumn}
+                                scrollTop={rightTab.scrollTop}
+                                scrollLeft={rightTab.scrollLeft}
                                 findKeybinding={findKeybinding}
                                 replaceKeybinding={replaceKeybinding}
                                 onChange={onRightChange}
                                 onCursorChange={onRightCursorChange}
+                                onScrollChange={onRightScrollChange}
                                 onSelectionChange={onRightSelectionChange}
                                 onEditorReady={onRightEditorReady}
                                 onFocus={onRightFocus}

@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Tab, SessionFile } from '../types';
+import type { DiskVersion, Tab, SessionFile } from '../types';
 
 /**
  * Request a native dialog via the menu-action chokepoint, then wait for the
@@ -60,6 +60,9 @@ export interface FileReadResult {
     content: string;
     size: number;
     encoding: string;
+    modified: number;
+    hash: string;
+    identity: string;
 }
 
 export async function readFileContent(path: string): Promise<FileReadResult> {
@@ -73,9 +76,29 @@ export async function readFileContent(path: string): Promise<FileReadResult> {
     }
 }
 
-export async function writeFileContent(path: string, content: string): Promise<void> {
+export interface FileWriteResult {
+    encoding: string;
+    size: number;
+    modified: number;
+    hash: string;
+    identity: string;
+}
+
+export async function writeFileContent(
+    path: string,
+    content: string,
+    encoding: string = 'UTF-8',
+    expectedVersion: DiskVersion | null = null,
+): Promise<FileWriteResult> {
     try {
-        await invoke('write_file_content', { path, content });
+        return await invoke<FileWriteResult>('write_file_content', {
+            path,
+            content,
+            encoding,
+            expectedModified: expectedVersion?.modified,
+            expectedSize: expectedVersion?.size,
+            expectedHash: expectedVersion?.hash,
+        });
     } catch (error) {
         console.error('Failed to write file:', error);
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -113,11 +136,11 @@ export async function rebuildNativeMenu(): Promise<void> {
     }
 }
 
-const MAX_UNTITLED_CONTENT_BYTES = 1024 * 1024; // 1 MB cap per untitled file (matches the dirty-disk cap)
+const MAX_UNTITLED_CONTENT_BYTES = 10 * 1024 * 1024;
 // Larger cap for unsaved edits to disk-backed files preserved for crash
 // recovery — most source files fit comfortably; very large dirty buffers fall
 // back to a plain disk re-read on restore (losing only the unsaved delta).
-const MAX_DIRTY_DISK_CONTENT_BYTES = 1024 * 1024; // 1 MB
+const MAX_DIRTY_DISK_CONTENT_BYTES = 10 * 1024 * 1024;
 
 // Encodes once to measure the real UTF-8 byte length. Using string `.length`
 // (UTF-16 code units) under-counts multibyte content and lets a file exceed the

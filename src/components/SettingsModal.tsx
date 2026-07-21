@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { Settings } from '../types';
 
 interface SettingsModalProps {
@@ -18,9 +18,7 @@ const FONT_FAMILIES = [
     { value: '"Source Code Pro", "Menlo", "Monaco", "Consolas", monospace', label: 'Source Code Pro' },
     { value: '"Ubuntu Mono", "Courier New", Courier, monospace', label: 'Ubuntu Mono' },
     { value: '"Roboto Mono", "Courier New", Courier, monospace', label: 'Roboto Mono' },
-    { value: '"Inconsolata", "Courier New", Courier, monospace', label: 'Inconsolata' },
     { value: '"Space Mono", "Courier New", Courier, monospace', label: 'Space Mono' },
-    { value: '"Anonymous Pro", "Courier New", Courier, monospace', label: 'Anonymous Pro' },
     { value: '"Courier Prime", "Courier New", Courier, monospace', label: 'Courier Prime' },
     { value: 'monospace', label: 'System Monospace' },
 ];
@@ -62,15 +60,153 @@ function Toggle({ checked, onChange, label, description }: {
     );
 }
 
-function SelectRow({ label, value, onChange, children }: {
-    label: string; value: string | number; onChange: (v: string) => void; children: React.ReactNode;
+interface DropdownOption { value: string | number; label: string; }
+
+function Dropdown({ value, options, onChange, ariaLabel }: {
+    value: string | number; options: DropdownOption[]; onChange: (v: string) => void; ariaLabel?: string;
+}) {
+    const [open, setOpen] = useState(false);
+    const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
+    const rootRef = useRef<HTMLDivElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
+
+    const selected = options.find(o => String(o.value) === String(value));
+    const focusOption = (index: number) => {
+        const items = rootRef.current?.querySelectorAll<HTMLElement>('[role="option"]');
+        items?.[(index + items.length) % items.length]?.focus();
+    };
+
+    const openMenu = () => {
+        const el = triggerRef.current;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        const margin = 8;
+        const gap = 4;
+        // Constrain to the modal's content area — measuring against the footer's top
+        // (not the viewport) is what keeps the menu from ever spilling onto the buttons.
+        const modal = el.closest('.s-modal');
+        const footer = modal?.querySelector('.s-footer');
+        const boundBottom = footer
+            ? footer.getBoundingClientRect().top - margin
+            : window.innerHeight - margin;
+        const boundTop = modal
+            ? modal.getBoundingClientRect().top + margin
+            : margin;
+        const spaceBelow = boundBottom - rect.bottom - gap;
+        const spaceAbove = rect.top - boundTop - gap;
+        // Flip up when there isn't enough room below and there's more above it.
+        const openUp = spaceBelow < 200 && spaceAbove > spaceBelow;
+        // maxHeight never exceeds the chosen side's space, so the menu stays inside
+        // the content area on whichever side it opens.
+        const maxHeight = Math.max(96, Math.min(280, openUp ? spaceAbove : spaceBelow));
+        setMenuStyle({
+            position: 'fixed',
+            left: rect.left,
+            width: rect.width,
+            maxHeight,
+            ...(openUp
+                ? { bottom: window.innerHeight - rect.top + gap }
+                : { top: rect.bottom + gap }),
+        });
+        setOpen(true);
+    };
+
+    useEffect(() => {
+        if (!open) return;
+        const close = () => setOpen(false);
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+        const onDown = (e: MouseEvent) => {
+            if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+        };
+        // Close when the page behind scrolls (the fixed-position menu would detach),
+        // but ignore scrolls originating inside the menu so it stays open and scrollable.
+        const onScroll = (e: Event) => {
+            if (rootRef.current && rootRef.current.contains(e.target as Node)) return;
+            setOpen(false);
+        };
+        window.addEventListener('resize', close);
+        window.addEventListener('scroll', onScroll, true);
+        document.addEventListener('keydown', onKey, true);
+        document.addEventListener('mousedown', onDown);
+        return () => {
+            window.removeEventListener('resize', close);
+            window.removeEventListener('scroll', onScroll, true);
+            document.removeEventListener('keydown', onKey, true);
+            document.removeEventListener('mousedown', onDown);
+        };
+    }, [open]);
+
+    return (
+        <div className="s-dropdown" ref={rootRef}>
+            <button
+                ref={triggerRef}
+                type="button"
+                className={`s-dropdown-trigger ${open ? 'open' : ''}`}
+                onClick={() => (open ? setOpen(false) : openMenu())}
+                onKeyDown={(event) => {
+                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        if (!open) openMenu();
+                        requestAnimationFrame(() => {
+                            const selectedIndex = Math.max(
+                                0,
+                                options.findIndex(option => String(option.value) === String(value)),
+                            );
+                            focusOption(event.key === 'ArrowDown' ? selectedIndex : options.length - 1);
+                        });
+                    }
+                }}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                aria-label={ariaLabel}
+            >
+                <span className="s-dropdown-value">{selected?.label ?? ''}</span>
+            </button>
+            {open && (
+                <ul className="s-dropdown-menu" role="listbox" style={menuStyle}>
+                    {options.map(o => {
+                        const isSel = String(o.value) === String(value);
+                        return (
+                            <li
+                                key={String(o.value)}
+                                role="option"
+                                tabIndex={isSel ? 0 : -1}
+                                aria-selected={isSel}
+                                className={`s-dropdown-option ${isSel ? 'selected' : ''}`}
+                                onClick={() => { onChange(String(o.value)); setOpen(false); }}
+                                onKeyDown={(event) => {
+                                    const index = options.indexOf(o);
+                                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                        event.preventDefault();
+                                        focusOption(index + (event.key === 'ArrowDown' ? 1 : -1));
+                                    } else if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault();
+                                        onChange(String(o.value));
+                                        setOpen(false);
+                                        triggerRef.current?.focus();
+                                    } else if (event.key === 'Escape') {
+                                        setOpen(false);
+                                        triggerRef.current?.focus();
+                                    }
+                                }}
+                            >
+                                {o.label}
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
+        </div>
+    );
+}
+
+function SelectRow({ label, value, onChange, options }: {
+    label: string; value: string | number; onChange: (v: string) => void; options: DropdownOption[];
 }) {
     return (
         <div className="s-row">
             <span className="s-row-label">{label}</span>
-            <select className="s-select" value={value} onChange={(e) => onChange(e.target.value)}>
-                {children}
-            </select>
+            <Dropdown value={value} options={options} onChange={onChange} ariaLabel={label} />
         </div>
     );
 }
@@ -120,6 +256,7 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
     const [checkForUpdates, setCheckForUpdates] = useState(settings.checkForUpdates);
 
     useEffect(() => {
+        if (!isOpen) return;
         setTheme(settings.theme);
         setFontFamily(settings.fontFamily);
         setFontSize(settings.fontSize);
@@ -133,7 +270,7 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
         setInsertSpaces(settings.insertSpaces);
         setFormatOnSave(settings.formatOnSave);
         setCheckForUpdates(settings.checkForUpdates);
-    }, [settings]);
+    }, [isOpen, settings]);
 
     if (!isOpen) return null;
 
@@ -173,24 +310,15 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
                         {activeTab === 'editor' && (
                             <>
                                 <SectionHeader title="Appearance" />
-                                <SelectRow label="Theme" value={theme} onChange={(v) => setTheme(v as 'light' | 'dark')}>
-                                    <option value="light">Light</option>
-                                    <option value="dark">Dark</option>
-                                </SelectRow>
-                                <SelectRow label="Editor Theme" value={editorTheme} onChange={setEditorTheme}>
-                                    {EDITOR_THEMES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                                </SelectRow>
-                                <SelectRow label="Font Family" value={fontFamily} onChange={setFontFamily}>
-                                    {FONT_FAMILIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-                                </SelectRow>
+                                <SelectRow label="Theme" value={theme} onChange={(v) => setTheme(v as 'light' | 'dark')}
+                                    options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} />
+                                <SelectRow label="Editor Theme" value={editorTheme} onChange={setEditorTheme} options={EDITOR_THEMES} />
+                                <SelectRow label="Font Family" value={fontFamily} onChange={setFontFamily} options={FONT_FAMILIES} />
                                 <NumberRow label="Font Size" value={fontSize} onChange={setFontSize} min={8} max={72} />
 
                                 <SectionHeader title="Indentation" />
-                                <SelectRow label="Tab Size" value={tabSize} onChange={(v) => setTabSize(parseInt(v))}>
-                                    <option value={2}>2 spaces</option>
-                                    <option value={4}>4 spaces</option>
-                                    <option value={8}>8 spaces</option>
-                                </SelectRow>
+                                <SelectRow label="Tab Size" value={tabSize} onChange={(v) => setTabSize(parseInt(v))}
+                                    options={[{ value: 2, label: '2 spaces' }, { value: 4, label: '4 spaces' }, { value: 8, label: '8 spaces' }]} />
                                 <Toggle label="Insert Spaces" description="Use spaces instead of tab characters" checked={insertSpaces} onChange={setInsertSpaces} />
 
                                 <SectionHeader title="Display" />
@@ -203,11 +331,8 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
                         {activeTab === 'files' && (
                             <>
                                 <SectionHeader title="Saving" />
-                                <SelectRow label="Autosave" value={autosave} onChange={(v) => setAutosave(v as 'off' | 'afterDelay' | 'onFocusChange')}>
-                                    <option value="off">Off</option>
-                                    <option value="afterDelay">After Delay</option>
-                                    <option value="onFocusChange">On Focus Change</option>
-                                </SelectRow>
+                                <SelectRow label="Autosave" value={autosave} onChange={(v) => setAutosave(v as 'off' | 'afterDelay' | 'onFocusChange')}
+                                    options={[{ value: 'off', label: 'Off' }, { value: 'afterDelay', label: 'After Delay' }, { value: 'onFocusChange', label: 'On Focus Change' }]} />
                                 {autosave === 'afterDelay' && (
                                     <NumberRow label="Delay (ms)" value={autosaveDelay} onChange={setAutosaveDelay} min={500} max={10000} step={500} />
                                 )}

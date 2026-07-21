@@ -224,6 +224,8 @@ export function FileIcon({ name }: { name: string }) {
 }
 
 /** Returns a React element for use in tabs */
+// Kept beside the icon components so the mapping has one implementation.
+// eslint-disable-next-line react-refresh/only-export-components
 export function getFileIconElement(fileName: string, isDirectory: boolean, expanded?: boolean): React.ReactNode {
     if (isDirectory) return <FolderIconNamed name={fileName} open={expanded} />;
     return <FileIcon name={fileName} />;
