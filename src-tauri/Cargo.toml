@@ -34,7 +34,7 @@ tempfile = "3"
 sha2 = "0.10.9"
 tokio = { version = "1", features = ["sync", "time"] }
 url = "2"
-dirs = "5"
+dirs = "6"
 
 # libc is Unix-only — keep this section at the very bottom so any future
 # cross-platform deps appended to [dependencies] don't get silently scoped
@@ -46,13 +46,13 @@ libc = "0.2"
 # still gated behind the unstable `windows_by_handle` feature, so the file
 # identity checks below call the Win32 API directly instead.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.60", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
 ] }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
 name = "file_operations"
