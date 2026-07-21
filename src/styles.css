@@ -262,7 +262,9 @@ body {
   color: white;
 }
 
-.menu-submenu:hover .menu-dropdown-nested {
+.menu-submenu:hover > .menu-dropdown-nested,
+.menu-submenu:focus-within > .menu-dropdown-nested,
+.menu-dropdown-nested.keyboard-open {
   display: block;
 }
 
@@ -707,12 +709,15 @@ body {
   accent-color: var(--accent-color);
 }
 
+/* Margins instead of flex gap — see .modal-actions note. */
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 16px;
-  padding: 24px 36px 32px;
+  padding: 16px 28px 24px;
   background: transparent;
+}
+.modal-footer .modal-button {
+  margin: 8px;
 }
 
 
@@ -1839,98 +1844,34 @@ body {
   overflow: hidden;
 }
 
-.find-in-files-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color);
-  background-color: var(--bg-tertiary);
-  flex-shrink: 0;
+/* Header and search row are shared with FileExplorer (.file-explorer-header,
+   .file-explorer-search, .file-explorer-search-clear) so the two sidebar
+   panels look and feel identical. .file-explorer-search-clear.active/:disabled
+   below extend that shared class for the case/whole-word toggles and the
+   disabled-while-searching state, which FileExplorer's own "×" button never
+   needed. */
+.file-explorer-search-clear.active {
+  background-color: var(--accent-color);
+  color: white;
 }
 
-.find-in-files-controls {
-  padding: 8px;
-  border-bottom: 1px solid var(--border-color);
-  flex-shrink: 0;
+.file-explorer-search-clear.active:hover {
+  background-color: var(--accent-color);
+  color: white;
 }
 
-.find-in-files-input-row {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-
-.find-in-files-input {
-  flex: 1;
-  padding: 6px 8px;
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  color: var(--text-primary);
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.15s;
-}
-
-.find-in-files-input:focus {
-  border-color: var(--accent-color);
-}
-
-.find-in-files-search-btn {
-  background: none;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-}
-
-.find-in-files-search-btn:hover:not(:disabled) {
-  background-color: var(--bg-tertiary);
-  color: var(--text-primary);
-  border-color: var(--accent-color);
-}
-
-.find-in-files-search-btn:disabled {
+.file-explorer-search-clear:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.find-in-files-options {
+.find-in-files-options-row {
   display: flex;
   gap: 4px;
-  margin-top: 6px;
-}
-
-.find-option-btn {
-  background: none;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 4px 8px;
-  font-size: 12px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-}
-
-.find-option-btn:hover {
-  background-color: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.find-option-btn.active {
-  background-color: var(--accent-color);
-  border-color: var(--accent-color);
-  color: white;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+  flex-shrink: 0;
 }
 
 .find-in-files-summary {
@@ -2377,7 +2318,12 @@ body {
   display: flex;
   width: 640px;
   max-width: 92vw;
-  height: 520px;
+  /* Auto height so every tab shows all its rows without scrolling
+     (QA: fixed 520px clipped the Editor tab). min-height keeps the short
+     tabs from collapsing; max-height still guards tiny windows, where
+     .s-content-scroll's overflow-y takes over. */
+  height: auto;
+  min-height: 520px;
   max-height: 85vh;
   border-radius: 14px;
   overflow: hidden;
@@ -2529,9 +2475,18 @@ body {
   transform: translateX(16px);
 }
 
-/* Select */
-.s-select {
-  padding: 6px 28px 6px 10px;
+/* Custom dropdown (replaces the native <select> so its list can't overlap the footer) */
+.s-dropdown {
+  position: relative;
+}
+.s-dropdown-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 140px;
+  max-width: 200px;
+  padding: 6px 10px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: var(--bg-primary);
@@ -2539,18 +2494,66 @@ body {
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
-  min-width: 140px;
-  max-width: 200px;
-  transition: border-color 0.15s;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.s-select:focus {
+.s-dropdown-trigger::after {
+  content: "";
+  flex-shrink: 0;
+  width: 10px;
+  height: 6px;
+  background: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center;
+  transition: transform 0.15s ease;
+}
+.s-dropdown-trigger:hover {
+  border-color: color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
+}
+.s-dropdown-trigger.open,
+.s-dropdown-trigger:focus-visible {
   outline: none;
   border-color: var(--accent-color);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 20%, transparent);
+}
+.s-dropdown-trigger.open::after {
+  transform: rotate(180deg);
+}
+.s-dropdown-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.s-dropdown-menu {
+  z-index: 50;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  animation: s-dropdown-in 0.12s ease-out;
+}
+@keyframes s-dropdown-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.s-dropdown-option {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.s-dropdown-option:hover {
+  background: var(--bg-tertiary);
+}
+.s-dropdown-option.selected {
+  background: var(--accent-color);
+  color: #fff;
 }
 
 /* Number input */
@@ -3493,12 +3496,18 @@ body {
   margin: 8px 0 0;
   opacity: 0.7;
 }
+/* Button spacing uses margins, not flex gap: older WebKitGTK/WebKit builds
+   ignore gap in flex layouts, which rendered the quit-dialog buttons fused
+   together. Margins (6px per side = 12px between) work on every engine.
+   Padding is reduced by 6px to keep the cluster's outer spacing unchanged. */
 .modal-actions {
-  padding: 0 36px 28px;
+  padding: 0 30px 22px;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
   justify-content: center;
+}
+.modal-actions .modal-btn {
+  margin: 6px;
 }
 .modal-btn {
   padding: 8px 28px;

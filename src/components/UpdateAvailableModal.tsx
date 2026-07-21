@@ -34,7 +34,7 @@ export function UpdateAvailableModal({ update, onLater, onSkip }: UpdateAvailabl
     function handleSkip() {
         // Remember this version so we don't prompt again unless a newer one ships.
         try { localStorage.setItem(`${SKIPPED_KEY_PREFIX}${update.version}`, '1'); }
-        catch (_) { /* private browsing — best effort */ }
+        catch { /* private browsing — best effort */ }
         onSkip();
     }
 

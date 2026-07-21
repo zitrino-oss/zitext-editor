@@ -33,6 +33,24 @@ function filterTree(nodes: FileNode[], query: string): FileNode[] {
     return result;
 }
 
+async function buildTreePreservingExpansion(
+    oldNodes: FileNode[],
+    path: string,
+): Promise<FileNode[]> {
+    const entries = await readDirectory(path, false);
+    const fresh = buildFileTree(entries, path);
+    if (oldNodes.length === 0) return fresh;
+    const oldByPath = new Map(oldNodes.map(node => [node.path, node]));
+    return Promise.all(fresh.map(async node => {
+        const old = oldByPath.get(node.path);
+        if (node.isDirectory && old?.expanded) {
+            const children = await buildTreePreservingExpansion(old.children || [], node.path);
+            return { ...node, expanded: true, children };
+        }
+        return node;
+    }));
+}
+
 export function FileExplorer({
     folderPath,
     onFolderOpen,
@@ -49,11 +67,23 @@ export function FileExplorer({
     const [searchQuery, setSearchQuery] = useState('');
 
     useEffect(() => {
-        if (folderPath) {
-            loadFileTree(folderPath);
-        } else {
+        let cancelled = false;
+        if (!folderPath) {
             setFileTree([]);
+            return;
         }
+        setLoading(true);
+        setError(null);
+        void buildTreePreservingExpansion([], folderPath)
+            .then(tree => { if (!cancelled) setFileTree(tree); })
+            .catch(err => {
+                if (!cancelled) {
+                    setError((err as Error).message);
+                    errorService.showError('Failed to load file tree', err as Error);
+                }
+            })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
     }, [folderPath]);
 
     const loadFileTree = async (path: string, preserveExpanded = false) => {
@@ -70,23 +100,6 @@ export function FileExplorer({
         } finally {
             setLoading(false);
         }
-    };
-
-    // Re-read `path` and, for any directory that was expanded in `oldNodes`,
-    // recursively re-read and re-expand it so refresh preserves the tree's open state.
-    const buildTreePreservingExpansion = async (oldNodes: FileNode[], path: string): Promise<FileNode[]> => {
-        const entries = await readDirectory(path, false);
-        const fresh = buildFileTree(entries, path);
-        if (oldNodes.length === 0) return fresh;
-        const oldByPath = new Map(oldNodes.map(n => [n.path, n]));
-        return Promise.all(fresh.map(async node => {
-            const old = oldByPath.get(node.path);
-            if (node.isDirectory && old?.expanded) {
-                const children = await buildTreePreservingExpansion(old.children || [], node.path);
-                return { ...node, expanded: true, children };
-            }
-            return node;
-        }));
     };
 
     const handleOpenFolder = async () => {
@@ -220,7 +233,7 @@ export function FileExplorer({
                 )}
 
                 {folderPath && !loading && !error && (
-                    <div className="file-tree">
+                    <div className="file-tree" role="tree" aria-label="Files">
                         <div className="file-tree-root">
                             <div className="file-tree-root-name" title={folderPath}>
                                 <FolderIconNamed name={folderPath.split(/[/\\]/).pop() || ''} open />
@@ -234,13 +247,14 @@ export function FileExplorer({
                                 To search text inside files, use Find in Files (Ctrl/Cmd+Shift+F).
                             </div>
                         )}
-                        {visibleTree.map(node => (
+                        {visibleTree.map((node, index) => (
                             <FileTreeNode
                                 key={node.path}
                                 node={node}
                                 level={0}
                                 onClick={handleNodeClick}
                                 onExpand={handleNodeExpand}
+                                tabIndex={index === 0 ? 0 : -1}
                             />
                         ))}
                     </div>

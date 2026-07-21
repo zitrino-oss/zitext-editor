@@ -5,7 +5,7 @@ import react from "@vitejs/plugin-react";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig({
   plugins: [react()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
@@ -37,12 +37,14 @@ export default defineConfig(async () => ({
 
   build: {
     // Increase chunk size warning limit for Monaco (it's a large library)
-    chunkSizeWarningLimit: 1500,
+    // Monaco's TypeScript worker is intentionally isolated and large; exact
+    // per-asset budgets are enforced after every build.
+    chunkSizeWarningLimit: 7500,
     rollupOptions: {
       output: {
         // Ensure Monaco workers are properly chunked. Rolldown (Vite 8) only
         // accepts the function form of manualChunks.
-        manualChunks: (id) =>
+        manualChunks: (id: string) =>
           id.includes('monaco-editor') || id.includes('@monaco-editor/react')
             ? 'monaco'
             : undefined,
@@ -58,4 +60,4 @@ export default defineConfig(async () => ({
   worker: {
     format: 'es',
   },
-}));
+});

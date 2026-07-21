@@ -30,6 +30,8 @@ rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 encoding_rs = "0.8"
+tempfile = "3"
+sha2 = "0.10.9"
 tokio = { version = "1", features = ["sync", "time"] }
 url = "2"
 dirs = "5"
@@ -40,11 +42,18 @@ dirs = "5"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# std's by-handle file identity (volume serial / file index / link count) is
+# still gated behind the unstable `windows_by_handle` feature, so the file
+# identity checks below call the Win32 API directly instead.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-tempfile = "3"
 
 [[bench]]
 name = "file_operations"
 harness = false
-

@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getVersion } from '@tauri-apps/api/app';
+import { ask } from '@tauri-apps/plugin-dialog';
 import { MenuBar } from './components/MenuBar';
 import { TabBar } from './components/TabBar';
 import { EditorPanel } from './components/EditorPanel';
@@ -21,23 +22,26 @@ import { ToastContainer } from './components/ToastContainer';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { UnsavedChangesModal } from './components/UnsavedChangesModal';
 import { UpdateAvailableModal } from './components/UpdateAvailableModal';
-import { SessionRestoreModal } from './components/SessionRestoreModal';
 import { useUpdateChecker } from './hooks/useUpdateChecker';
 import { initCrashReporter } from './utils/crashReporter';
 import { startTimer } from './utils/perfMetrics';
 import { startSession, endSession } from './utils/sessionHealth';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { FindReplaceBar } from './components/FindReplaceBar';
+import { DialogFocusManager } from './components/DialogFocusManager';
 import { useEditorState } from './state/useEditorState';
 import { useProjectState } from './state/useProjectState';
 import { useAutosave } from './state/useAutosave';
 import { handleKeyDown, isMac, parseBinding, type ShortcutHandler } from './utils/shortcuts';
-import { getRecentFiles } from './utils/fileOperations';
+import { getLastSession, getRecentFiles } from './utils/fileOperations';
 import { formatJson, minifyJson, validateJson, sortJsonKeys } from './utils/jsonTools';
 import { formatXml, formatYaml, validateXml } from './utils/xmlYamlTools';
 import { errorService } from './services/ErrorService';
 import { MIN_FONT_SIZE, FONT_SIZE_STEP, MAX_FONT_SIZE } from './constants';
 import type { editor } from 'monaco-editor';
+import monaco from './monaco-config';
+import { getModelForTab, modelUriForTab } from './utils/editorModels';
+import { fileWatcher } from './utils/fileWatcher';
 import './styles.css';
 
 interface HandlersRef {
@@ -46,11 +50,12 @@ interface HandlersRef {
     openFileFromDialog: () => Promise<void>;
     handleOpenFolder: () => Promise<void>;
     activeTabId: string | null;
-    saveFile: (id: string) => Promise<boolean>;
+    saveFile: (id: string, contentOverride?: string) => Promise<boolean>;
     saveFileAs: (id: string) => Promise<void>;
     handleCloseTab: (id: string) => void;
     handleFind: () => void;
     handleReplace: () => void;
+    handleRevertFile: () => Promise<void>;
     handleToggleTheme: () => void;
     handleToggleWordWrap: () => void;
     toggleSidebar: () => void;
@@ -80,11 +85,13 @@ function App() {
         setActiveTabId,
         updateTabContent,
         updateCursorPosition,
+        updateScrollPosition,
         toggleReadOnly,
         changeLanguage,
         reorderTabs,
         renameFile,
         reloadFileFromDisk,
+        revertToBaseline,
         ignoreExternalChange,
         updateSettings,
         splitViewEnabled,
@@ -107,7 +114,11 @@ function App() {
         toggleSidebar,
         updateSidebarWidth,
         setOpenedFolder,
-    } = useProjectState(settings.openedFolder);
+    } = useProjectState(
+        settings.openedFolder,
+        settings.sidebarCollapsed,
+        settings.sidebarWidth,
+    );
 
     // Normalize legacy editorTheme value at runtime (no restart needed).
     // 'vs-light' is not a Monaco theme name; map it to the correct built-in name
@@ -123,7 +134,7 @@ function App() {
     useEffect(() => {
         const t = settings.theme === 'light' ? 'light' : 'dark';
         document.documentElement.setAttribute('data-theme', t);
-        try { localStorage.setItem('zitext_theme', t); } catch (_) { /* private browsing */ }
+        try { localStorage.setItem('zitext_theme', t); } catch { /* private browsing */ }
         invoke('set_window_theme', { theme: t }).catch(() => { /* ignored on platforms without window theme API */ });
     }, [settings.theme]);
 
@@ -146,6 +157,7 @@ function App() {
     const [showFindInFiles, setShowFindInFiles] = useState(false);
     const [showDiagnostics, setShowDiagnostics] = useState(false);
     const [appCloseModalOpen, setAppCloseModalOpen] = useState(false);
+    const closeRequestTokenRef = useRef<string | null>(null);
 
     // Editor instances + active pane tracking
     const [leftEditorInstance, setLeftEditorInstance] = useState<editor.IStandaloneCodeEditor | null>(null);
@@ -157,6 +169,13 @@ function App() {
     // The tab that currently has focus (left pane unless split view + right pane is focused)
     const focusedTabId = splitViewEnabled && activePane === 'right' ? rightPaneTabId : activeTabId;
     const focusedTab = focusedTabId ? (tabs.find(t => t.id === focusedTabId) ?? null) : null;
+
+    useEffect(() => {
+        if (activePane === 'right' && (!splitViewEnabled || !rightPaneTabId)) {
+            activePaneRef.current = 'left';
+            setActivePane('left');
+        }
+    }, [activePane, splitViewEnabled, rightPaneTabId]);
 
     const handlersRef = useRef<HandlersRef | null>(null);
 
@@ -186,12 +205,15 @@ function App() {
     useEffect(() => {
         let unlisten: (() => void) | null = null;
         let cancelled = false;
-        listen('close-requested', () => {
+        listen<string>('close-requested', (event) => {
+            closeRequestTokenRef.current = event.payload;
             if (tabsRef.current.some(t => t.isDirty)) {
                 setAppCloseModalOpen(true);
             } else {
                 beginClose();
-                invoke('confirm_app_close').catch(() => { /* window already closing */ });
+                invoke('confirm_app_close', { token: event.payload })
+                    .finally(() => { closeRequestTokenRef.current = null; })
+                    .catch(() => { /* window already closing */ });
             }
         }).then((u) => { if (cancelled) u(); else unlisten = u; });
         return () => { cancelled = true; if (unlisten) unlisten(); };
@@ -210,31 +232,42 @@ function App() {
     }, []);
 
     // Autosave: save all dirty tabs with saved paths
-    useAutosave({
+    const { notifyChange: notifyAutosaveChange } = useAutosave({
         mode: settings.autosave,
         delay: settings.autosaveDelay,
         // Must match the save-loop predicate below exactly. Keying on `t.path`
         // (not `!t.isUntitled`) avoids a no-op autosave loop for the edge case
         // of a dirty tab that is not "untitled" yet still has no path.
         isDirty: tabs.some(t => t.isDirty && !!t.path),
+        activeTabId,
         onSave: async () => {
+            let allSaved = true;
             for (const tab of tabs) {
                 if (tab.isDirty && tab.path) {
-                    await saveFile(tab.id);
+                    allSaved = await saveFile(tab.id) && allSaved;
                 }
             }
+            return allSaved;
         },
     });
 
-    useEffect(() => {
-        loadRecentFiles();
-    }, []);
+    // Feed edits into the autosave debounce (After Delay mode). Wrapping
+    // updateTabContent keeps every content-change path — typing, paste, and the
+    // JSON/XML/YAML tools — resetting the same timer.
+    const updateTabContentAndAutosave = useCallback((tabId: string, content: string) => {
+        updateTabContent(tabId, content);
+        notifyAutosaveChange();
+    }, [updateTabContent, notifyAutosaveChange]);
 
     const loadRecentFiles = useCallback(async () => {
         const files = await getRecentFiles();
         setRecentFiles(files);
         recentFilesRef.current = files;
     }, []);
+
+    useEffect(() => {
+        void loadRecentFiles();
+    }, [loadRecentFiles]);
 
     // Window title
     useEffect(() => {
@@ -249,7 +282,7 @@ function App() {
             }
         };
         update();
-    }, [activeTab?.path, activeTab?.isDirty]);
+    }, [activeTab]);
 
     // ─── Active pane helpers ────────────────────────────────────────────────
 
@@ -323,19 +356,54 @@ function App() {
 
     // ─── Save with optional format-on-save ─────────────────────────────────
 
-    const handleSave = useCallback(async (tabId: string): Promise<boolean> => {
-        if (settings.formatOnSave) {
-            const editor = getActiveEditor();
-            if (editor) {
-                try {
-                    await editor.getAction('editor.action.formatDocument')?.run();
-                } catch {
-                    // Formatter may not be available for this language; proceed
-                }
-            }
+    const formatTabContent = useCallback(async (tabId: string): Promise<string | undefined> => {
+        const tab = tabs.find(candidate => candidate.id === tabId);
+        if (!tab) return undefined;
+
+        const uri = modelUriForTab(tabId);
+        let model = getModelForTab(tabId);
+        if (!model) {
+            model = monaco.editor.createModel(tab.content, tab.language, monaco.Uri.parse(uri));
         }
-        return await saveFile(tabId);
-    }, [settings.formatOnSave, getActiveEditor, saveFile]);
+
+        const visibleEditor = [leftEditorInstance, rightEditorInstance].find(
+            instance => instance?.getModel()?.uri.toString() === uri,
+        ) ?? null;
+        const temporaryEditor = visibleEditor
+            ? null
+            : monaco.editor.create(document.createElement('div'), {
+                model,
+                automaticLayout: false,
+                readOnly: false,
+            });
+        const targetEditor = visibleEditor ?? temporaryEditor;
+
+        try {
+            await targetEditor?.getAction('editor.action.formatDocument')?.run();
+            const formatted = model.getValue();
+            // A detached editor has no React onChange bridge, so synchronize
+            // its formatted value explicitly. Visible editors do this through
+            // their normal Monaco content listener.
+            if (temporaryEditor && formatted !== tab.content) {
+                updateTabContentAndAutosave(tabId, formatted);
+            }
+            return formatted;
+        } catch {
+            return model.getValue();
+        } finally {
+            temporaryEditor?.dispose();
+        }
+    }, [tabs, leftEditorInstance, rightEditorInstance, updateTabContentAndAutosave]);
+
+    const handleSave = useCallback(async (tabId: string): Promise<boolean> => {
+        let contentOverride: string | undefined;
+        if (settings.formatOnSave) {
+            contentOverride = await formatTabContent(tabId);
+        }
+        // Manual save (Ctrl+S / File > Save / save-on-close) — advances the
+        // revert baseline, unlike autosave which calls saveFile directly.
+        return await saveFile(tabId, contentOverride, true);
+    }, [settings.formatOnSave, formatTabContent, saveFile]);
 
     // ─── App-close (quit) with unsaved-changes prompt ───────────────────────
 
@@ -343,31 +411,74 @@ function App() {
         const dirty = tabs.filter(t => t.isDirty);
         for (const t of dirty) {
             const ok = await handleSave(t.id);
-            if (!ok) { setAppCloseModalOpen(false); return; } // a save was cancelled — abort quit
+            if (!ok) {
+                setAppCloseModalOpen(false);
+                const token = closeRequestTokenRef.current;
+                closeRequestTokenRef.current = null;
+                if (token) {
+                    await invoke('cancel_app_close', { token }).catch(() => { /* request already expired */ });
+                }
+                return;
+            }
         }
         setAppCloseModalOpen(false);
         beginClose();
-        await invoke('confirm_app_close').catch(() => { /* window already closing */ });
+        const token = closeRequestTokenRef.current;
+        closeRequestTokenRef.current = null;
+        if (token) {
+            await invoke('confirm_app_close', { token }).catch(() => { /* window already closing */ });
+        }
     };
 
     const handleQuitWithoutSaving = async () => {
         setAppCloseModalOpen(false);
         beginClose();
-        await invoke('confirm_app_close').catch(() => { /* window already closing */ });
+        const token = closeRequestTokenRef.current;
+        closeRequestTokenRef.current = null;
+        if (token) {
+            await invoke('confirm_app_close', { token }).catch(() => { /* window already closing */ });
+        }
     };
 
-    const handleCancelQuit = () => setAppCloseModalOpen(false);
+    const handleCancelQuit = () => {
+        setAppCloseModalOpen(false);
+        const token = closeRequestTokenRef.current;
+        closeRequestTokenRef.current = null;
+        if (token) {
+            invoke('cancel_app_close', { token }).catch(() => { /* request already expired */ });
+        }
+    };
 
     // ─── Revert file ────────────────────────────────────────────────────────
 
     const handleRevertFile = useCallback(async () => {
         if (!focusedTabId || !focusedTab?.path) return;
-        const confirmed = window.confirm(`Revert "${focusedTab.title}" to last saved state? Unsaved changes will be lost.`);
+        const confirmed = await ask(
+            `Revert "${focusedTab.title}" to last saved state? Unsaved changes will be lost.`,
+            {
+                title: 'Revert File?',
+                kind: 'warning',
+                okLabel: 'Revert',
+                cancelLabel: 'Cancel',
+            },
+        );
         if (confirmed) {
-            await reloadFileFromDisk(focusedTabId);
-            errorService.showSuccess(`Reverted to saved version`);
+            try {
+                // Revert to the last intentional save point (the tab's baseline),
+                // not the current disk contents — autosave may have already
+                // written the edits we're discarding. revertToBaseline rewrites
+                // the file with the baseline so those autosaved edits are undone.
+                const reverted = await revertToBaseline(focusedTabId);
+                if (reverted) {
+                    errorService.showSuccess(`Reverted to saved version`);
+                }
+            } catch (error) {
+                // Surface failures (locked file, permissions, etc.) instead of
+                // silently swallowing them as an unhandled rejection.
+                errorService.showError('Failed to revert file', error as Error);
+            }
         }
-    }, [focusedTabId, focusedTab, reloadFileFromDisk]);
+    }, [focusedTabId, focusedTab, revertToBaseline]);
 
     // ─── Find / Replace (custom bar) ──────────────────────────────────────
 
@@ -409,7 +520,6 @@ function App() {
             // command only grants paths already in the persisted recent list.
             await invoke('grant_recent_path', { path }).catch(() => { /* may already be granted */ });
             // Try to restore cursor/scroll position from the last saved session.
-            const { getLastSession } = await import('./utils/fileOperations');
             const session = await getLastSession();
             const entry = session.find(s => s.path === path);
             await openFile(
@@ -431,7 +541,7 @@ function App() {
 
     const handleOpenFolder = async () => {
         const path = await openFolder();
-        if (path) await updateSettings({ openedFolder: path });
+        if (path) await updateSettings({ openedFolder: path, sidebarCollapsed: false });
     };
 
     const handleFileSelect = async (path: string) => {
@@ -444,13 +554,31 @@ function App() {
 
     const handleCloseFolder = async () => {
         closeFolder();
-        await updateSettings({ openedFolder: null });
+        await updateSettings({ openedFolder: null, sidebarCollapsed: true });
     };
 
-    const handleSidebarWidthChange = async (width: number) => {
+    const sidebarPersistTimerRef = useRef<number | null>(null);
+    const handleSidebarWidthChange = useCallback((width: number) => {
         updateSidebarWidth(width);
-        await updateSettings({ sidebarWidth: width });
-    };
+        if (sidebarPersistTimerRef.current !== null) {
+            window.clearTimeout(sidebarPersistTimerRef.current);
+        }
+        sidebarPersistTimerRef.current = window.setTimeout(() => {
+            sidebarPersistTimerRef.current = null;
+            void updateSettings({ sidebarWidth: width });
+        }, 250);
+    }, [updateSidebarWidth, updateSettings]);
+
+    useEffect(() => () => {
+        if (sidebarPersistTimerRef.current !== null) {
+            window.clearTimeout(sidebarPersistTimerRef.current);
+        }
+    }, []);
+
+    const handleToggleSidebar = useCallback(() => {
+        toggleSidebar();
+        void updateSettings({ sidebarCollapsed: !sidebarCollapsed });
+    }, [toggleSidebar, updateSettings, sidebarCollapsed]);
 
     const handleCopyPath = async () => {
         if (focusedTab?.path) {
@@ -485,9 +613,10 @@ function App() {
         handleCloseTab,
         handleFind,
         handleReplace,
+        handleRevertFile,
         handleToggleTheme,
         handleToggleWordWrap,
-        toggleSidebar,
+        toggleSidebar: handleToggleSidebar,
         handleCopyPath,
         handleChangeLanguage,
         handleToggleSplitView,
@@ -575,7 +704,13 @@ function App() {
         // re-subscribing. Capture phase so our handler fires before Monaco's
         // internal handlers on Windows/WebView2, where Monaco may consume events
         // before they bubble.
-        const handler = (e: KeyboardEvent) => handleKeyDown(e, shortcutsRef.current);
+        const handler = (e: KeyboardEvent) => {
+            // Modal inputs (especially keybinding capture) own their keystrokes.
+            // The listener runs in capture phase, so this guard must happen
+            // before React receives the event.
+            if (document.querySelector('.modal-overlay, .cp-overlay')) return;
+            handleKeyDown(e, shortcutsRef.current);
+        };
         window.addEventListener('keydown', handler, true);
         return () => window.removeEventListener('keydown', handler, true);
     }, []);
@@ -609,7 +744,7 @@ function App() {
             await l('menu-copy_path', () => handlersRef.current?.handleCopyPath());
             await l('menu-preferences', () => setSettingsModalOpen(true));
             await l('menu-shortcuts', () => setKeybindingEditorOpen(true));
-            await l('menu-revert_file', () => handleRevertFile());
+            await l('menu-revert_file', () => handlersRef.current?.handleRevertFile());
             await l('menu-about', () => setAboutModalOpen(true));
 
             const langs = [
@@ -652,6 +787,7 @@ function App() {
                 try {
                     // Set the folder directly — it was already validated on the Rust side
                     setOpenedFolder(folder);
+                    await updateSettings({ openedFolder: folder, sidebarCollapsed: false });
                 } catch (error) {
                     console.error('Failed to open folder from CLI:', error);
                 }
@@ -664,7 +800,7 @@ function App() {
 
         setupListeners();
         return () => { active = false; cleanupFns.forEach(fn => fn()); };
-    }, []);
+    }, [setOpenedFolder, updateSettings]);
 
     // ─── Drag-and-drop overlay ──────────────────────────────────────────────
 
@@ -693,7 +829,7 @@ function App() {
         { id: 'toggle-theme',    label: 'Toggle Theme',       description: 'Switch between light and dark',   category: 'View',    action: handleToggleTheme },
         { id: 'toggle-wrap',     label: 'Toggle Word Wrap',   description: 'Toggle line wrapping',            category: 'View',    action: handleToggleWordWrap },
         { id: 'toggle-readonly', label: 'Toggle Read-Only',   description: 'Toggle read-only mode',           category: 'View',    action: handleToggleReadOnly },
-        { id: 'toggle-explorer', label: 'Toggle Explorer',    description: 'Show or hide file explorer',      category: 'View',    action: toggleSidebar },
+        { id: 'toggle-explorer', label: 'Toggle Explorer',    description: 'Show or hide file explorer',      category: 'View',    action: handleToggleSidebar },
         { id: 'toggle-split',    label: 'Toggle Split View',  description: 'Split editor side by side',       category: 'View',    action: handleToggleSplitView },
         { id: 'toggle-preview',  label: 'Toggle Markdown Preview', description: 'Preview markdown content',  category: 'View',    action: () => focusedTabId && togglePreview(focusedTabId) },
         { id: 'toggle-minimap',  label: 'Toggle Minimap',     description: 'Show or hide the minimap',        category: 'View',    action: () => updateSettings({ showMinimap: !settings.showMinimap }) },
@@ -702,13 +838,13 @@ function App() {
         { id: 'keybindings',     label: 'Keyboard Shortcuts', description: 'Edit keyboard shortcuts',         category: 'Settings', action: () => setKeybindingEditorOpen(true) },
         { id: 'diagnostics',    label: 'Show Diagnostics',   description: 'Session health and performance',  category: 'Help',     action: () => setShowDiagnostics(true) },
         // Data tools
-        { id: 'json-format',     label: 'Format JSON',        description: 'Pretty-print JSON',               category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContent(focusedTab.id, formatJson(focusedTab.content)); errorService.showSuccess('JSON formatted'); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
-        { id: 'json-minify',     label: 'Minify JSON',        description: 'Remove whitespace from JSON',     category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContent(focusedTab.id, minifyJson(focusedTab.content)); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
+        { id: 'json-format',     label: 'Format JSON',        description: 'Pretty-print JSON',               category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContentAndAutosave(focusedTab.id, formatJson(focusedTab.content)); errorService.showSuccess('JSON formatted'); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
+        { id: 'json-minify',     label: 'Minify JSON',        description: 'Remove whitespace from JSON',     category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContentAndAutosave(focusedTab.id, minifyJson(focusedTab.content)); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
         { id: 'json-validate',   label: 'Validate JSON',      description: 'Check if JSON is valid',          category: 'JSON',    action: () => { if (!focusedTab) return; const r = validateJson(focusedTab.content); if (r.valid) { errorService.showSuccess('Valid JSON'); } else { errorService.showError(r.line ? `Invalid JSON at line ${r.line}: ${r.error}` : `Invalid JSON: ${r.error}`); } } },
-        { id: 'json-sort-keys',  label: 'Sort JSON Keys',     description: 'Sort object keys alphabetically', category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContent(focusedTab.id, sortJsonKeys(focusedTab.content)); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
-        { id: 'xml-format',      label: 'Format XML',         description: 'Format XML with indentation',     category: 'XML',     action: () => { if (!focusedTab) return; try { updateTabContent(focusedTab.id, formatXml(focusedTab.content)); } catch (e) { errorService.showError('Invalid XML', e as Error); } } },
+        { id: 'json-sort-keys',  label: 'Sort JSON Keys',     description: 'Sort object keys alphabetically', category: 'JSON',    action: () => { if (!focusedTab) return; try { updateTabContentAndAutosave(focusedTab.id, sortJsonKeys(focusedTab.content)); } catch (e) { errorService.showError('Invalid JSON', e as Error); } } },
+        { id: 'xml-format',      label: 'Format XML',         description: 'Format XML with indentation',     category: 'XML',     action: () => { if (!focusedTab) return; try { updateTabContentAndAutosave(focusedTab.id, formatXml(focusedTab.content)); } catch (e) { errorService.showError('Unable to format XML', e as Error); } } },
         { id: 'xml-validate',    label: 'Validate XML',       description: 'Check if XML is valid',           category: 'XML',     action: () => { if (!focusedTab) return; const r = validateXml(focusedTab.content); if (r.valid) { errorService.showSuccess('Valid XML'); } else { errorService.showError(`Invalid XML: ${r.error}`); } } },
-        { id: 'yaml-format',     label: 'Format YAML',        description: 'Format YAML with indentation',    category: 'YAML',    action: () => { if (!focusedTab) return; try { updateTabContent(focusedTab.id, formatYaml(focusedTab.content)); } catch (e) { errorService.showError('Invalid YAML', e as Error); } } },
+        { id: 'yaml-format',     label: 'Format YAML',        description: 'Format YAML with indentation',    category: 'YAML',    action: () => { if (!focusedTab) return; try { updateTabContentAndAutosave(focusedTab.id, formatYaml(focusedTab.content)); } catch (e) { errorService.showError('Invalid YAML', e as Error); } } },
     ];
 
     if (isLoading) {
@@ -725,7 +861,7 @@ function App() {
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
         >
-            <SessionRestoreModal />
+            <DialogFocusManager />
             {availableUpdate && (
                 <UpdateAvailableModal
                     update={availableUpdate}
@@ -738,9 +874,9 @@ function App() {
                     onNew={createNewTab}
                     onOpen={openFileFromDialog}
                     onOpenFolder={handleOpenFolder}
-                    onSave={() => activeTabId && handleSave(activeTabId)}
-                    onSaveAs={() => activeTabId && saveFileAs(activeTabId)}
-                    onClose={() => activeTabId && handleCloseTab(activeTabId)}
+                    onSave={() => focusedTabId && handleSave(focusedTabId)}
+                    onSaveAs={() => focusedTabId && saveFileAs(focusedTabId)}
+                    onClose={() => focusedTabId && handleCloseTab(focusedTabId)}
                     onRevertFile={handleRevertFile}
                     onFind={handleFind}
                     onFindInFiles={() => setShowFindInFiles(v => !v)}
@@ -752,7 +888,7 @@ function App() {
                     onToggleReadOnly={handleToggleReadOnly}
                     onOpenSettings={() => setSettingsModalOpen(true)}
                     onOpenKeybindings={() => setKeybindingEditorOpen(true)}
-                    onToggleExplorer={toggleSidebar}
+                    onToggleExplorer={handleToggleSidebar}
                     onToggleSplitView={handleToggleSplitView}
                     onOpenInRightPane={handleOpenInRightPane}
                     onSwapPanes={handleSwapPanes}
@@ -766,7 +902,7 @@ function App() {
                     activeTabPath={focusedTab?.path || null}
                     splitViewEnabled={splitViewEnabled}
                     hasRightPane={rightPaneTabId !== null}
-                    hasSavedPath={!!(activeTab?.path)}
+                    hasSavedPath={!!focusedTab?.path}
                     onAbout={() => setAboutModalOpen(true)}
                 />
             )}
@@ -799,14 +935,17 @@ function App() {
                         onOpenFile={handleOpenFileAtLine}
                         onOpenFolder={async () => {
                             const path = await openFolder();
-                            if (path) await updateSettings({ openedFolder: path });
+                            if (path) await updateSettings({ openedFolder: path, sidebarCollapsed: false });
                         }}
                         onClose={() => setShowFindInFiles(false)}
                     />
                 ) : !sidebarCollapsed ? (
                     <FileExplorer
                         folderPath={openedFolder}
-                        onFolderOpen={setOpenedFolder}
+                        onFolderOpen={(path) => {
+                            setOpenedFolder(path);
+                            void updateSettings({ openedFolder: path, sidebarCollapsed: false });
+                        }}
                         onFileSelect={handleFileSelect}
                         onClose={handleCloseFolder}
                         collapsed={sidebarCollapsed}
@@ -825,7 +964,16 @@ function App() {
                             tabId={focusedTab.id}
                             fileName={focusedTab.path?.split(/[/\\]/).pop() || 'Untitled'}
                             changeCount={focusedTab.externalChangeCount}
-                            onReload={() => reloadFileFromDisk(focusedTab.id)}
+                            isDeleted={!!focusedTab.path && fileWatcher.isPendingDeletion(focusedTab.path)}
+                            onReload={() => {
+                                if (focusedTab.path && fileWatcher.isPendingDeletion(focusedTab.path)) {
+                                    void saveFile(focusedTab.id);
+                                } else {
+                                    void reloadFileFromDisk(focusedTab.id).catch(error => {
+                                        errorService.showError('Failed to reload file', error as Error);
+                                    });
+                                }
+                            }}
                             onIgnore={() => ignoreExternalChange(focusedTab.id)}
                         />
                     )}
@@ -834,12 +982,12 @@ function App() {
                         <WelcomeScreen
                             onNewFile={createNewTab}
                             onOpenFile={openFileFromDialog}
-                            onOpenFolder={openFolder}
+                            onOpenFolder={handleOpenFolder}
                             recentFiles={recentFiles}
                             onOpenRecent={handleOpenRecent}
                         />
                     ) : activeTab ? (
-                        <div className="editor-wrapper" style={{ position: 'relative' }}>
+                        <div id="editor-workspace" className="editor-wrapper" style={{ position: 'relative' }}>
                             <FindReplaceBar
                                 isOpen={findOpen}
                                 showReplace={findShowReplace}
@@ -853,10 +1001,12 @@ function App() {
                                     settings={{ ...settings, editorTheme: effectiveEditorTheme }}
                                     findKeybinding={settings.keybindings['find']}
                                     replaceKeybinding={settings.keybindings['replace']}
-                                    onLeftChange={(content) => updateTabContent(activeTab.id, content)}
-                                    onRightChange={(content) => { if (rightPaneTabId) updateTabContent(rightPaneTabId, content); }}
+                                    onLeftChange={(content) => updateTabContentAndAutosave(activeTab.id, content)}
+                                    onRightChange={(content) => { if (rightPaneTabId) updateTabContentAndAutosave(rightPaneTabId, content); }}
                                     onLeftCursorChange={(line, col) => updateCursorPosition(activeTab.id, line, col)}
                                     onRightCursorChange={(line, col) => { if (rightPaneTabId) updateCursorPosition(rightPaneTabId, line, col); }}
+                                    onLeftScrollChange={(top, left) => updateScrollPosition(activeTab.id, top, left)}
+                                    onRightScrollChange={(top, left) => { if (rightPaneTabId) updateScrollPosition(rightPaneTabId, top, left); }}
                                     onLeftSelectionChange={(len) => { if (activePaneRef.current === 'left') setSelectionLength(len); }}
                                     onRightSelectionChange={(len) => { if (activePaneRef.current === 'right') setSelectionLength(len); }}
                                     onLeftEditorReady={setLeftEditorInstance}
@@ -868,6 +1018,7 @@ function App() {
                                 <MarkdownPreview content={activeTab.content} theme={settings.theme} />
                             ) : (
                                 <EditorPanel
+                                    modelPath={modelUriForTab(activeTab.id)}
                                     content={activeTab.content}
                                     language={activeTab.language}
                                     editorTheme={effectiveEditorTheme}
@@ -881,10 +1032,13 @@ function App() {
                                     insertSpaces={settings.insertSpaces}
                                     cursorLine={activeTab.cursorLine}
                                     cursorColumn={activeTab.cursorColumn}
+                                    scrollTop={activeTab.scrollTop}
+                                    scrollLeft={activeTab.scrollLeft}
                                     findKeybinding={settings.keybindings['find']}
                                     replaceKeybinding={settings.keybindings['replace']}
-                                    onChange={(content) => updateTabContent(activeTab.id, content)}
+                                    onChange={(content) => updateTabContentAndAutosave(activeTab.id, content)}
                                     onCursorChange={(line, col) => updateCursorPosition(activeTab.id, line, col)}
+                                    onScrollChange={(top, left) => updateScrollPosition(activeTab.id, top, left)}
                                     onSelectionChange={setSelectionLength}
                                     onEditorReady={setLeftEditorInstance}
                                     onFocus={() => { activePaneRef.current = 'left'; setActivePane('left'); }}

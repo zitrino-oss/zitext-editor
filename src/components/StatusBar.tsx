@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import { getLanguageDisplayName } from '../utils/languageDetection';
 import { calculateTextStats, formatFileSize, formatNumber } from '../utils/textStats';
 
@@ -34,7 +35,22 @@ export function StatusBar({
     onToggleMinimap,
     onChangeLanguage,
 }: StatusBarProps) {
-    const stats = content ? calculateTextStats(content, selectionLength) : null;
+    const [statsContent, setStatsContent] = useState(content);
+    useEffect(() => {
+        if (content === undefined) {
+            setStatsContent(undefined);
+            return;
+        }
+        const timer = window.setTimeout(() => setStatsContent(content), 250);
+        return () => window.clearTimeout(timer);
+    }, [content]);
+
+    // Keep live cursor/selection rendering cheap. Whole-document counts settle
+    // after the typing burst instead of rescanning a large buffer per keystroke.
+    const stats = useMemo(
+        () => statsContent ? calculateTextStats(statsContent) : null,
+        [statsContent],
+    );
 
     return (
         <div className="status-bar">

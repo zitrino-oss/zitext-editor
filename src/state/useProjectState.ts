@@ -1,18 +1,21 @@
 import { useState, useCallback, useEffect } from 'react';
 import { openFolderDialog } from '../utils/fileTree';
 
-export function useProjectState(initialFolder: string | null = null) {
+export function useProjectState(
+    initialFolder: string | null = null,
+    initialCollapsed: boolean = true,
+    initialWidth: number = 250,
+) {
     const [openedFolder, setOpenedFolder] = useState<string | null>(initialFolder);
-    const [sidebarCollapsed, setSidebarCollapsed] = useState(true); // Hidden by default
-    const [sidebarWidth, setSidebarWidth] = useState(250);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(initialCollapsed);
+    const [sidebarWidth, setSidebarWidth] = useState(initialWidth);
 
     // Sync when settings load after mount (initialFolder transitions from null → saved value)
     useEffect(() => {
-        if (initialFolder != null && openedFolder == null) {
-            setOpenedFolder(initialFolder);
-            setSidebarCollapsed(false);
-        }
-    }, [initialFolder]); // eslint-disable-line react-hooks/exhaustive-deps
+        setOpenedFolder(initialFolder);
+        setSidebarCollapsed(initialCollapsed);
+        setSidebarWidth(initialWidth);
+    }, [initialFolder, initialCollapsed, initialWidth]);
 
     const openFolder = useCallback(async () => {
         const path = await openFolderDialog();

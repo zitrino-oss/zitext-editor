@@ -17,11 +17,17 @@ jobs:
     name: Rust Benchmarks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.93.0
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           workspaces: src-tauri
 
@@ -36,10 +42,13 @@ jobs:
 
       - name: Run benchmarks
         working-directory: src-tauri
-        run: cargo bench -- --output-format bencher 2>&1 | tee bench-output.txt
+        run: |
+          set -o pipefail
+          cargo bench --bench file_operations -- --output-format bencher 2>&1 | tee bench-output.txt
+          node ../scripts/check-benchmark-thresholds.mjs bench-output.txt
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bench-results
           path: src-tauri/target/criterion/
