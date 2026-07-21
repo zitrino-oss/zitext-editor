@@ -1,0 +1,30 @@
+name: Dependabot auto-merge
+
+# Enables auto-merge on Dependabot PRs. GitHub then merges each PR
+# automatically once the required status check ("Lint, type-check & build",
+# enforced by the protect-main-integrity ruleset) passes. Human PRs are
+# unaffected — they still require Code Owner review.
+#
+# How review is satisfied: the protect-main-review ruleset lists Dependabot
+# and GitHub Actions as bypass actors, so these PRs skip the review
+# requirement while ALL integrity/CI rules still apply to them.
+#
+# Safe use of pull_request_target: this workflow never checks out or executes
+# PR-authored code, so the elevated token cannot be hijacked by a malicious PR.
+
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-merge (squash)
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
