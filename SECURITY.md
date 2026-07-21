@@ -154,6 +154,22 @@ The renderer is treated as untrusted. Every command that touches a user-supplied
 
 **Session restore is gated by a native prompt.** On launch, if the last session contained file-backed tabs, a native modal asks "Restore N files from your last session?". On *Restore*, the backend grants every path and the renderer's `getLastSession` returns the full list (with cursor/scroll metadata). On *Skip*, the backend filters file-backed entries out of the returned list; only untitled-tab restoration proceeds.
 
+**Clipboard trade-off.** Clipboard read/write permission is exposed to the main
+window because Monaco's webview paste path is unreliable on some Windows
+WebView2 versions and the editor's explicit Copy/Cut/Paste actions use the
+native clipboard plugin. A renderer compromise could therefore read or replace
+clipboard text while the application is running. File, shell, HTTP, and general
+URL-opening permissions remain unavailable; deployments that prioritize
+clipboard confidentiality over native paste behavior should remove these two
+capabilities.
+
+**Writes are conflict-safe.** Disk-backed tabs carry a backend-generated
+mtime/size/SHA-256 snapshot. The backend serializes writes, verifies that exact
+snapshot immediately before saving, writes through a same-directory temporary
+file, flushes it, atomically publishes it, and refuses to overwrite an external
+change. Windows-1252 documents retain their original encoding unless the user
+chooses a different format.
+
 **Session data is redacted from the renderer-facing settings read.** `read_settings` (renderer-callable) returns settings with `last_session` stripped, so a compromised renderer cannot read previous-session file paths or preserved unsaved-buffer content before the user consents. `get_last_session` is the only command that returns session data, and it blocks until the restore-prompt decision. The renderer *can* re-grant a path that is already in the persisted `recent_files` list (via `grant_recent_path`, used by the in-app Recent Files list and Welcome screen), but it cannot grant an arbitrary path.
 
 **Out-of-scope paths (no grant needed):**

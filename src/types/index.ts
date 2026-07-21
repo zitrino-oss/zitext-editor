@@ -2,12 +2,16 @@ export interface Tab {
   id: string;
   path: string | null; // null for untitled files
   content: string;
+  /** Monotonic content version used to make asynchronous saves race-safe. */
+  revision: number;
   cursorLine: number;
   cursorColumn: number;
   isDirty: boolean;
   language: string;
   isReadOnly: boolean;
   encoding: string;
+  /** Last disk snapshot used for optimistic overwrite protection. */
+  diskVersion: DiskVersion | null;
   eol: 'LF' | 'CRLF';
   // Scroll position, title, and tab state
   scrollTop: number;
@@ -18,6 +22,12 @@ export interface Tab {
   externalChangeCount: number; // incremented each change — lets prompt reappear on repeated modifications
   isPreview?: boolean;
   isPinned?: boolean;
+}
+
+export interface DiskVersion {
+  modified: number;
+  size: number;
+  hash: string;
 }
 
 export interface Settings {
@@ -116,4 +126,3 @@ export interface FindReplaceState {
   wholeWord: boolean;
   useRegex: boolean;
 }
-

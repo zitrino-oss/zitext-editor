@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { ask } from '@tauri-apps/plugin-dialog';
+import { requiresShortcutModifier } from '../utils/shortcuts';
 
 interface KeybindingEditorProps {
     isOpen: boolean;
@@ -44,11 +46,28 @@ function KeyCombo({ combo }: { combo: string }) {
 export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: KeybindingEditorProps) {
     const [editedBindings, setEditedBindings] = useState<Record<string, string>>(keybindings);
     const [editingCommand, setEditingCommand] = useState<string | null>(null);
+    const [captureError, setCaptureError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        setEditedBindings(keybindings);
+        setEditingCommand(null);
+        setCaptureError(null);
+    }, [isOpen, keybindings]);
 
     if (!isOpen) return null;
 
     const handleKeyCapture = (commandId: string, e: React.KeyboardEvent) => {
+        if (e.key === 'Tab') {
+            setEditingCommand(null);
+            return;
+        }
         e.preventDefault();
+        if (['Escape', 'Backspace', 'Delete'].includes(e.key)) {
+            setEditingCommand(null);
+            setCaptureError(null);
+            return;
+        }
         const parts: string[] = [];
         if (e.ctrlKey || e.metaKey) parts.push(mod);
         if (e.shiftKey) parts.push('Shift');
@@ -57,7 +76,12 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
         if (key === ' ') key = 'Space';
         else if (key.length === 1) key = key.toUpperCase();
         if (['Control', 'Meta', 'Shift', 'Alt'].includes(key)) return;
+        if (requiresShortcutModifier(key) && !(e.ctrlKey || e.metaKey || e.altKey)) {
+            setCaptureError('Typing and navigation keys require Ctrl/Cmd or Alt so editor input remains available.');
+            return;
+        }
         parts.push(key);
+        setCaptureError(null);
         setEditedBindings(prev => ({ ...prev, [commandId]: parts.join('+') }));
         setEditingCommand(null);
     };
@@ -73,7 +97,7 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
         setEditedBindings(defaults);
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         const bindingValues = COMMANDS.map(c => getBinding(c.id));
         const seen = new Set<string>();
         const duplicates = new Set<string>();
@@ -83,7 +107,13 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
         }
         if (duplicates.size > 0) {
             const list = Array.from(duplicates).join(', ');
-            if (!window.confirm(`Duplicate shortcuts: ${list}\n\nSave anyway?`)) return;
+            const confirmed = await ask(`Duplicate shortcuts: ${list}\n\nSave anyway?`, {
+                title: 'Duplicate Shortcuts',
+                kind: 'warning',
+                okLabel: 'Save Anyway',
+                cancelLabel: 'Cancel',
+            });
+            if (!confirmed) return;
         }
         onSave(editedBindings);
         onClose();
@@ -106,6 +136,7 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
                 </div>
 
                 <div className="kb-list">
+                    {captureError && <p className="kb-capture-error" role="alert">{captureError}</p>}
                     <div className="kb-list-header">
                         <span>Command</span>
                         <span>Shortcut</span>

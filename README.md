@@ -14,7 +14,7 @@ React, TypeScript, and the Monaco Editor. Simple, fast, and feature-rich.
 ### Editing
 - Multiple tabs
 - Split view (side-by-side editing, `Ctrl/Cmd+\`)
-- Syntax highlighting for 60+ languages (auto-detected by file extension)
+- Syntax highlighting for 60+ language modes; common extensions are auto-detected
 - Multi-cursor editing
 - Column (rectangular) selection (Alt+Shift+Drag, or middle mouse button)
 - Find in file, Find in files, and Go to line
@@ -35,8 +35,8 @@ React, TypeScript, and the Monaco Editor. Simple, fast, and feature-rich.
 
 ## Prerequisites
 
-- **Node.js** 20.19+ (LTS recommended)
-- **Rust** (latest stable) — https://www.rust-lang.org/tools/install
+- **Node.js** 22 LTS (see `.nvmrc`)
+- **Rust** 1.93.0 (installed automatically from `rust-toolchain.toml`)
 - **Tauri prerequisites** for your platform — https://tauri.app/start/prerequisites/
   - macOS: Xcode Command Line Tools (`xcode-select --install`)
   - Windows: Microsoft Visual Studio C++ Build Tools
@@ -46,7 +46,7 @@ React, TypeScript, and the Monaco Editor. Simple, fast, and feature-rich.
 
 ```bash
 git clone https://github.com/zitrino-oss/zitext-editor.git
-cd zitext-community
+cd zitext-editor
 npm install
 npm run tauri dev
 ```
@@ -64,6 +64,21 @@ Bundles are written to:
 - **macOS**: `src-tauri/target/release/bundle/dmg/`
 - **Windows**: `src-tauri/target/release/bundle/msi/` and `nsis/`
 - **Linux**: `src-tauri/target/release/bundle/appimage/` and `deb/`
+
+## Command-line wrapper
+
+The packaged macOS/Linux wrapper accepts existing files and folders:
+
+```bash
+zitext path/to/file.txt
+zitext --wait path/to/file.txt
+```
+
+`--wait` blocks until every regular file from that invocation is closed. It
+returns nonzero if ZITEXT does not accept the request, stops heartbeating, or
+exceeds the wait timeout, making it safe for tools such as `git commit`.
+Folders are opened but are not waited on; nonexistent paths are currently
+ignored.
 
 ## Keyboard shortcuts
 
@@ -85,8 +100,9 @@ Shortcuts are customizable from **Settings → Keyboard Shortcuts**.
 
 ## Supported languages
 
-Syntax highlighting is detected automatically from the file extension and spans
-60+ languages, including JavaScript, TypeScript, HTML, CSS/SCSS/Sass/Less,
+Common file extensions are detected automatically, and additional modes can be
+selected from the language menu. The 60+ available modes include JavaScript,
+TypeScript, HTML, CSS/SCSS/Sass/Less,
 JSON, XML, YAML, TOML, Python, Java, C/C++, C#, Go, Rust, Ruby, PHP, Swift,
 Kotlin, Scala, shell scripts, PowerShell, SQL, Markdown, LaTeX, and more.
 

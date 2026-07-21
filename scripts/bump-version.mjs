@@ -8,13 +8,14 @@
  * Updates every place the version lives so they never drift again:
  *   - src-tauri/tauri.conf.json   (the authoritative app version)
  *   - package.json
+ *   - package-lock.json
  *   - src-tauri/Cargo.toml        ([package] version)
  *   - src-tauri/Cargo.lock        (the zitext-editor crate entry)
  *   - CHANGELOG.md                (adds a dated [x.y.z] section + footer links)
  *
  * It does NOT commit, tag, or push — review the diff, then:
  *   git checkout -b release/vX.Y.Z && git commit -am "release: X.Y.Z" && open a PR
- * After the PR merges, run the "Release Build" workflow with the same version.
+ * After the PR merges, push the matching vX.Y.Z tag to start the release.
  * The website (downloads + docs) reads the version from the published
  * release manifest, so it updates automatically — no website edit needed.
  */
@@ -22,6 +23,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyReleaseVersion } from './verify-release-version.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = 'https://github.com/zitrino-oss/zitext-editor';
@@ -39,10 +41,12 @@ function edit(rel, fn) {
     const before = readFileSync(path, 'utf8');
     const after = fn(before);
     if (after === before) {
-        console.warn(`  ! ${rel.padEnd(28)} no change (pattern not found?)`);
-        return;
+        throw new Error(`${rel}: no change; pattern missing or version already set`);
     }
     writeFileSync(path, after);
+    if (readFileSync(path, 'utf8') !== after) {
+        throw new Error(`${rel}: written content could not be verified`);
+    }
 }
 
 // --- config files -----------------------------------------------------------
@@ -51,6 +55,15 @@ log('src-tauri/tauri.conf.json', `version -> ${version}`);
 
 edit('package.json', (s) => s.replace(/("version":\s*")[^"]+(")/, `$1${version}$2`));
 log('package.json', `version -> ${version}`);
+
+edit('package-lock.json', (s) => {
+    const lock = JSON.parse(s);
+    lock.version = version;
+    if (!lock.packages?.['']) throw new Error('package-lock.json is missing the root package');
+    lock.packages[''].version = version;
+    return `${JSON.stringify(lock, null, 2)}\n`;
+});
+log('package-lock.json', `root versions -> ${version}`);
 
 edit('src-tauri/Cargo.toml', (s) => s.replace(/^(version\s*=\s*")[^"]+(")/m, `$1${version}$2`));
 log('src-tauri/Cargo.toml', `version -> ${version}`);
@@ -87,5 +100,8 @@ edit('CHANGELOG.md', (s) => {
 });
 log('CHANGELOG.md', `added [${version}] - ${today} + footer links`);
 
+// Re-read the independently parsed source files before reporting success.
+verifyReleaseVersion(version);
+
 console.log(`\nBumped to ${version}. Review the diff, fill in the CHANGELOG bullets,`);
-console.log('commit on a branch, open a PR, then run the Release Build workflow with the same version.');
+console.log('commit on a branch, merge it, then push the matching immutable vX.Y.Z tag.');

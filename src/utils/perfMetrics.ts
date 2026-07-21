@@ -1,7 +1,7 @@
 /**
  * Lightweight performance measurement utility.
  * Uses performance.mark() / performance.measure() under the hood.
- * Metrics are stored in-memory and logged to console in dev mode.
+ * Metrics are stored in memory and can be queried by diagnostic UI.
  */
 
 const metrics: Record<string, number[]> = {};
@@ -20,10 +20,6 @@ export function endTimer(label: string): number {
 
         if (!metrics[label]) metrics[label] = [];
         metrics[label].push(duration);
-
-        if (import.meta.env.DEV) {
-            console.log(`[perf] ${label}: ${duration.toFixed(1)}ms`);
-        }
 
         // Clean up marks
         performance.clearMarks(`${label}-start`);
@@ -50,9 +46,6 @@ export function getMetrics(): Record<string, { count: number; avg: number; min: 
     return result;
 }
 
-export function logMetricsSummary(): void {
-    const m = getMetrics();
-    if (Object.keys(m).length > 0) {
-        console.table(m);
-    }
+export function logMetricsSummary(): ReturnType<typeof getMetrics> {
+    return getMetrics();
 }

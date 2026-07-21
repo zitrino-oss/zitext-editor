@@ -1,61 +1,136 @@
 #!/bin/sh
 # Shell wrapper for ZITEXT Editor (macOS / Linux)
 # Supports: zitext [--wait|-w] [file|folder ...]
-# Install: sudo ln -sf "$(pwd)/zitext" /usr/local/bin/zitext
 
-set -e
+set -eu
 
 WAIT_MODE=0
-FILES=""
-
-for arg in "$@"; do
-    case "$arg" in
-        --wait|-w)
-            WAIT_MODE=1
-            ;;
-        *)
-            FILES="$FILES $arg"
-            ;;
+for argument in "$@"; do
+    case "$argument" in
+        --wait|-w) WAIT_MODE=1 ;;
     esac
 done
 
-# Resolve the app binary path
 if [ "$(uname)" = "Darwin" ]; then
     APP_PATH="/Applications/ZITEXT Editor.app"
     if [ ! -d "$APP_PATH" ]; then
         echo "ZITEXT Editor not found at $APP_PATH" >&2
         exit 1
     fi
-    open -a "ZITEXT Editor" --args $FILES
+    launch() {
+        # -n starts a short-lived secondary process when ZITEXT is already
+        # running; the single-instance plugin forwards these exact arguments.
+        open -n -a "ZITEXT Editor" --args "$@"
+    }
 else
-    # Linux — find the AppImage or installed binary
-    BIN=$(command -v zitext-editor 2>/dev/null || echo "")
+    BIN=$(command -v zitext-editor 2>/dev/null || true)
     if [ -z "$BIN" ]; then
         echo "ZITEXT Editor not found in PATH" >&2
         exit 1
     fi
-    "$BIN" $FILES &
+    launch() {
+        "$BIN" "$@" &
+    }
 fi
 
-# --wait mode: poll for lock files created by the app
-if [ "$WAIT_MODE" = "1" ] && [ -n "$FILES" ]; then
-    for f in $FILES; do
-        # Skip flags
-        case "$f" in -*) continue ;; esac
-        # Resolve to absolute path
-        ABS_PATH=$(cd "$(dirname "$f")" 2>/dev/null && pwd)/$(basename "$f")
-        # Convert to lock file name (same scheme as Rust backend)
-        LOCK_NAME=$(echo "$ABS_PATH" | tr '/:' '___' | tr '\\' '_')
-        LOCK_FILE="$TMPDIR/zitext-wait-${LOCK_NAME}.lock"
-        # Fallback TMPDIR
-        [ -z "$TMPDIR" ] && LOCK_FILE="/tmp/zitext-wait-${LOCK_NAME}.lock"
+if [ "$WAIT_MODE" -eq 0 ]; then
+    launch "$@"
+    exit 0
+fi
 
-        # Wait up to 8 hours for the lock file to be deleted
-        TIMEOUT=28800
-        ELAPSED=0
-        while [ -f "$LOCK_FILE" ] && [ "$ELAPSED" -lt "$TIMEOUT" ]; do
-            sleep 0.5
-            ELAPSED=$((ELAPSED + 1))
-        done
+if [ "$(uname)" = "Darwin" ]; then
+    # LaunchServices does not reliably inherit a shell-customized TMPDIR. This
+    # is the same per-user temp directory used by std::env::temp_dir() in app.
+    TMPBASE=$(getconf DARWIN_USER_TEMP_DIR)
+else
+    TMPBASE=${TMPDIR:-/tmp}
+fi
+MANIFEST=$(mktemp "$TMPBASE/zitext-wait-manifest.XXXXXX")
+
+cleanup() {
+    if [ -f "$MANIFEST" ]; then
+        while IFS= read -r lock; do
+            rm -f -- "$lock"
+        done < "$MANIFEST"
+        rm -f -- "$MANIFEST"
+    fi
+}
+trap cleanup EXIT HUP INT TERM
+
+LAUNCHED=0
+for argument in "$@"; do
+    case "$argument" in
+        --wait|-w) continue ;;
+    esac
+
+    if [ -e "$argument" ]; then
+        directory=$(dirname -- "$argument")
+        filename=$(basename -- "$argument")
+        absolute=$(cd -- "$directory" && printf '%s/%s' "$(pwd -P)" "$filename")
+    else
+        continue
+    fi
+
+    if [ -d "$absolute" ]; then
+        launch "$absolute"
+    else
+        lock=$(mktemp "$TMPBASE/zitext-wait.XXXXXX")
+        printf '%s\n' "$lock" >> "$MANIFEST"
+        launch --wait-lock "$lock" "$absolute"
+    fi
+    LAUNCHED=1
+done
+
+if [ "$LAUNCHED" -eq 0 ]; then
+    launch
+    exit 0
+fi
+
+WAIT_FAILED=0
+while IFS= read -r lock; do
+    # The application acknowledges only validated, non-symlink lock files.
+    elapsed=0
+    while [ -f "$lock" ] && ! grep -qx 'accepted' "$lock" && [ "$elapsed" -lt 30 ]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
     done
-fi
+    # Disappearance means the app accepted the lock and the document was
+    # closed before this one-second poll observed the acknowledgement.
+    if [ ! -f "$lock" ]; then
+        continue
+    fi
+    if ! grep -qx 'accepted' "$lock"; then
+        echo "ZITEXT did not accept the --wait request" >&2
+        WAIT_FAILED=1
+        continue
+    fi
+
+    elapsed=0
+    stale=0
+    while [ -f "$lock" ] && [ "$elapsed" -lt 28800 ]; do
+        if find "$lock" -mmin +2 -print | grep -q .; then
+            # A sleeping laptop advances wall-clock mtime without giving the
+            # app a chance to heartbeat. Require a second stale observation
+            # after resume before treating the editor as dead.
+            # The app refreshes every 30 seconds. Give a resumed WebView one
+            # full heartbeat interval before the confirming observation.
+            sleep 35
+            elapsed=$((elapsed + 35))
+            if [ -f "$lock" ] && find "$lock" -mmin +2 -print | grep -q .; then
+                echo "ZITEXT stopped responding while waiting for the document" >&2
+                WAIT_FAILED=1
+                stale=1
+                break
+            fi
+            continue
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if [ -f "$lock" ] && [ "$stale" -eq 0 ]; then
+        echo "Timed out waiting for ZITEXT to close the document" >&2
+        WAIT_FAILED=1
+    fi
+done < "$MANIFEST"
+
+exit "$WAIT_FAILED"

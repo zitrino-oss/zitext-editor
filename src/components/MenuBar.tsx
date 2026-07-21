@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getShortcutDisplay, isMac } from '../utils/shortcuts';
 import type { Settings } from '../types';
+import { getDirectEnabledMenuItems, openKeyboardSubmenu } from './menuNavigation';
 
 interface MenuBarProps {
     onNew: () => void;
@@ -74,12 +75,124 @@ export function MenuBar({
     onAbout,
 }: MenuBarProps) {
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
+    const menuBarRef = useRef<HTMLDivElement>(null);
 
     const closeMenu = () => setActiveMenu(null);
     const handleMenuClick = (menu: string) => setActiveMenu(activeMenu === menu ? null : menu);
 
+    useEffect(() => {
+        const root = menuBarRef.current;
+        if (!root) return;
+        root.querySelectorAll<HTMLElement>('.menu-item').forEach(item => {
+            item.setAttribute('role', 'menuitem');
+            item.setAttribute('tabindex', '0');
+            item.setAttribute('aria-haspopup', 'menu');
+            item.setAttribute('aria-expanded', String(item.querySelector('.menu-dropdown') !== null));
+        });
+        root.querySelectorAll<HTMLElement>('.menu-dropdown, .menu-dropdown-nested').forEach(menu => {
+            menu.setAttribute('role', 'menu');
+        });
+        root.querySelectorAll<HTMLElement>('.menu-option, .menu-submenu').forEach(option => {
+            option.setAttribute('role', 'menuitem');
+            const disabled = option.classList.contains('disabled');
+            option.setAttribute('tabindex', disabled ? '-1' : '0');
+            if (disabled) option.setAttribute('aria-disabled', 'true');
+        });
+        root.querySelectorAll<HTMLElement>('.menu-submenu').forEach(submenu => {
+            submenu.setAttribute('aria-haspopup', 'menu');
+            submenu.setAttribute('aria-expanded', 'false');
+        });
+        root.querySelectorAll<HTMLElement>('.menu-divider').forEach(divider => {
+            divider.setAttribute('role', 'separator');
+        });
+    }, [activeMenu]);
+
+    const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+        const target = event.target as HTMLElement;
+        const topLevelItems = Array.from(
+            menuBarRef.current?.querySelectorAll<HTMLElement>(':scope > .menu-item') ?? [],
+        );
+        const topLevelItem = target.matches('.menu-item') ? target : null;
+        if (
+            target.matches('.menu-submenu')
+            && (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowRight')
+        ) {
+            event.preventDefault();
+            openKeyboardSubmenu(target);
+            return;
+        }
+        if ((event.key === 'Enter' || event.key === ' ') && target.matches('.menu-item, .menu-option, .menu-submenu')) {
+            event.preventDefault();
+            target.click();
+            return;
+        }
+        if (event.key === 'Escape') {
+            menuBarRef.current?.querySelectorAll<HTMLElement>('.menu-submenu').forEach(submenu => {
+                submenu.setAttribute('aria-expanded', 'false');
+                submenu.querySelector(':scope > .menu-dropdown-nested')?.classList.remove('keyboard-open');
+            });
+            closeMenu();
+            target.closest<HTMLElement>('.menu-item')?.focus();
+            return;
+        }
+        if (event.key === 'ArrowDown' && topLevelItem) {
+            event.preventDefault();
+            if (!topLevelItem.querySelector('[role="menu"]')) topLevelItem.click();
+            requestAnimationFrame(() => {
+                const menu = topLevelItem.querySelector<HTMLElement>(':scope > [role="menu"]');
+                if (menu) getDirectEnabledMenuItems(menu)[0]?.focus();
+            });
+            return;
+        }
+        if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && topLevelItem) {
+            event.preventDefault();
+            const current = topLevelItems.indexOf(topLevelItem);
+            const direction = event.key === 'ArrowRight' ? 1 : -1;
+            const next = topLevelItems[(current + direction + topLevelItems.length) % topLevelItems.length];
+            next?.focus();
+            if (activeMenu) next?.click();
+            return;
+        }
+        if (event.key === 'ArrowLeft') {
+            const nestedMenu = target.closest<HTMLElement>('.menu-dropdown-nested');
+            if (nestedMenu) {
+                event.preventDefault();
+                const parent = nestedMenu.parentElement;
+                nestedMenu.classList.remove('keyboard-open');
+                parent?.setAttribute('aria-expanded', 'false');
+                parent?.focus();
+                return;
+            }
+        }
+        if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && target.closest('[role="menu"]')) {
+            event.preventDefault();
+            const menu = target.closest('[role="menu"]')!;
+            const options = getDirectEnabledMenuItems(menu);
+            const index = options.indexOf(target);
+            const direction = event.key === 'ArrowDown' ? 1 : -1;
+            options[(index + direction + options.length) % options.length]?.focus();
+        }
+    };
+
     return (
-        <div className="menu-bar">
+        <div
+            className="menu-bar"
+            ref={menuBarRef}
+            role="menubar"
+            aria-label="Application menu"
+            onKeyDown={handleMenuKeyDown}
+            onFocus={(event) => {
+                const submenu = (event.target as HTMLElement).closest<HTMLElement>('.menu-submenu');
+                submenu?.setAttribute('aria-expanded', 'true');
+            }}
+            onBlur={(event) => {
+                const submenu = (event.target as HTMLElement).closest<HTMLElement>('.menu-submenu');
+                if (submenu && !submenu.contains(event.relatedTarget as Node | null)) {
+                    submenu.setAttribute('aria-expanded', 'false');
+                    submenu.querySelector(':scope > .menu-dropdown-nested')?.classList.remove('keyboard-open');
+                }
+            }}
+        >
             {/* File Menu */}
             <div className="menu-item" onClick={() => handleMenuClick('file')}>
                 File
