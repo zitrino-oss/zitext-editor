@@ -1,6 +1,6 @@
 [package]
 name = "zitext-editor"
-version = "2.1.4"
+version = "2.1.5"
 description = "A fast, lightweight, cross-platform text and code editor built with Tauri and Monaco."
 authors = ["Zitrino"]
 license = "Apache-2.0"

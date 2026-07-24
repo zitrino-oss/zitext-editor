@@ -1,6 +1,6 @@
 {
   "productName": "ZITEXT Editor",
-  "version": "2.1.4",
+  "version": "2.1.5",
   "identifier": "com.zitrino.zitext",
   "build": {
     "beforeDevCommand": "npm run dev",
