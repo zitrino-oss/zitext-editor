@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.5] - 2026-07-21
+
 ### Fixed
+- Fixed caret/selection drift while typing: Monaco now re-measures character widths once web fonts finish loading, so the cursor no longer creeps away from the text with fonts narrower or wider than the fallback.
+- Removed duplicate Copy/Cut/Paste entries from the editor right-click menu (kept the cross-platform Tauri clipboard actions).
+- **Find in Files** now excludes generated build/cache directories (`.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.angular`, `.vite`, `.parcel-cache`, `.cache`, `.output`, `coverage`) so real source matches aren't crowded out of the result cap, and only shows "No results found" after a search actually runs.
+- Relabeled the Explorer filename filter and added a hint pointing to Find in Files, so it is no longer confused with content search.
+- **Go to Line** no longer renders an empty popup on Linux (WebKitGTK); it shows the in-app range warning toast instead.
+- Empty untitled tabs are no longer persisted, so they stop accumulating and reopening on startup.
+- Settings info cards now render with a visible border on Linux (WebKitGTK), and the Settings modal fits its content instead of clipping the Editor tab behind a scrollbar.
+- Aligned the search panel's close (×) button in the header.
 - Unsaved-changes dialog buttons no longer overlap (added spacing to the action row).
 - Files open from the Explorer noticeably faster — the native-menu rebuild is now deferred until after the document renders instead of blocking it.
 - Closed renderer path-grant escalation through recent files, project settings, and recovery sessions.
@@ -17,10 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repaired CLI paths with spaces, secondary-instance folders, and `--wait` handshakes.
 - Added frontend and Rust regression tests plus strict TypeScript, ESLint, rustfmt, Clippy, and test gates in CI.
 
+### Changed
+- Replaced the native Font Family control with a custom in-app dropdown.
+- Removed the Anonymous Pro and Inconsolata fonts; saved settings that still reference them are migrated back to the default font stack on load.
+- Release builds now publish a GitHub Release with installers and checksums automatically on every tag push, kept in sync with the website downloads.
+
 ### Security
 - Moved session-restore consent to a native one-shot prompt and narrowed Tauri capabilities.
 - Added backend payload budgets, regular-file enforcement, native close tokens, safe rename semantics, and immutable pinned CI actions.
 - Production releases now require signing verification on every platform, immutable tags, serialized publication, and monotonically increasing update metadata.
+- Resolved cargo-audit advisories (crossbeam-epoch, quick-xml via plist) with dated, scoped exceptions for the remaining build-only cases.
 
 ## [2.1.4]
 
@@ -70,7 +86,8 @@ Initial public release baseline. Highlights:
 - Light/dark themes that follow the OS theme on first launch
 - Update notifications with one-click download from the website
 
-[Unreleased]: https://github.com/zitrino-oss/zitext-editor/compare/v2.1.4...HEAD
+[Unreleased]: https://github.com/zitrino-oss/zitext-editor/compare/v2.1.5...HEAD
+[2.1.5]: https://github.com/zitrino-oss/zitext-editor/compare/v2.1.4...v2.1.5
 [2.1.4]: https://github.com/zitrino-oss/zitext-editor/releases/tag/v2.1.4
 [2.1.3]: https://github.com/zitrino-oss/zitext-editor/releases/tag/v2.1.3
 [2.1.2]: https://github.com/zitrino-oss/zitext-editor/releases/tag/v2.1.2
