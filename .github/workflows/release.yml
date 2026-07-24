@@ -343,7 +343,20 @@ jobs:
           # Import certificate
           $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
           Import-PfxCertificate -FilePath certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
-          
+
+          # The current signing certificate is self-signed, so its chain does not
+          # terminate in a publicly trusted root. `signtool verify /pa` below would
+          # therefore reject it. Trust the end-entity certificate on THIS runner only
+          # (LocalMachine Root + TrustedPublisher) so verification passes in-pipeline.
+          # NOTE: this grants no trust on end-user machines — installers remain
+          # self-signed and users will still see an "Unknown Publisher" prompt.
+          $pfxData = Get-PfxData -FilePath certificate.pfx -Password $password
+          $publicCert = $pfxData.EndEntityCertificates[0]
+          foreach ($storeName in @('Root','TrustedPublisher')) {
+            $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($storeName,'LocalMachine')
+            $store.Open('ReadWrite'); $store.Add($publicCert); $store.Close()
+          }
+
           # Sign MSI and NSIS installer
           $msi = Get-ChildItem -Path "src-tauri\target\release\bundle\msi" -Filter "*.msi" | Select-Object -First 1
           $nsis = Get-ChildItem -Path "src-tauri\target\release\bundle\nsis" -Filter "*-setup.exe" | Select-Object -First 1
