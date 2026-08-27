@@ -11,6 +11,14 @@ interface MenuBarProps {
     onSaveAs: () => void;
     onClose: () => void;
     onRevertFile: () => void;
+    onUndo: () => void;
+    onRedo: () => void;
+    onCut: () => void;
+    onCopy: () => void;
+    onPaste: () => void;
+    onSelectAll: () => void;
+    onToggleLineComment: () => void;
+    onFormatDocument: () => void;
     onFind: () => void;
     onFindInFiles: () => void;
     onReplace: () => void;
@@ -19,6 +27,7 @@ interface MenuBarProps {
     onToggleTheme: () => void;
     onToggleWordWrap: () => void;
     onToggleReadOnly: () => void;
+    onTogglePreview: () => void;
     onOpenSettings: () => void;
     onOpenKeybindings: () => void;
     onToggleExplorer: () => void;
@@ -27,11 +36,14 @@ interface MenuBarProps {
     onSwapPanes: () => void;
     onChangeLanguage: (language: string) => void;
     onCopyPath: () => void;
+    onToggleFullScreen: () => void;
+    isFullscreen: boolean;
     recentFiles: string[];
     onOpenRecent: (path: string) => void;
     settings: Settings;
     hasActiveTab: boolean;
     isReadOnly: boolean;
+    isPreview: boolean;
     activeTabPath: string | null;
     splitViewEnabled: boolean;
     hasRightPane: boolean;
@@ -47,6 +59,14 @@ export function MenuBar({
     onSaveAs,
     onClose,
     onRevertFile,
+    onUndo,
+    onRedo,
+    onCut,
+    onCopy,
+    onPaste,
+    onSelectAll,
+    onToggleLineComment,
+    onFormatDocument,
     onFind,
     onFindInFiles,
     onReplace,
@@ -55,6 +75,7 @@ export function MenuBar({
     onToggleTheme,
     onToggleWordWrap,
     onToggleReadOnly,
+    onTogglePreview,
     onOpenSettings,
     onOpenKeybindings,
     onToggleExplorer,
@@ -63,11 +84,14 @@ export function MenuBar({
     onSwapPanes,
     onChangeLanguage,
     onCopyPath,
+    onToggleFullScreen,
+    isFullscreen,
     recentFiles,
     onOpenRecent,
     settings,
     hasActiveTab,
     isReadOnly,
+    isPreview,
     activeTabPath,
     splitViewEnabled,
     hasRightPane,
@@ -79,6 +103,11 @@ export function MenuBar({
 
     const closeMenu = () => setActiveMenu(null);
     const handleMenuClick = (menu: string) => setActiveMenu(activeMenu === menu ? null : menu);
+
+    // Editor commands need a mounted Monaco instance — Markdown preview unmounts
+    // it — and the mutating ones additionally need a writable buffer.
+    const canEdit = hasActiveTab && !isPreview;
+    const canWrite = canEdit && !isReadOnly;
 
     useEffect(() => {
         const root = menuBarRef.current;
@@ -245,6 +274,29 @@ export function MenuBar({
                 Edit
                 {activeMenu === 'edit' && (
                     <div className="menu-dropdown" onMouseLeave={closeMenu}>
+                        {/* Undo…Select All mirror the macOS native menubar's PredefinedMenuItems,
+                            which the in-app menubar (Windows/Linux) has no equivalent for.
+                            They need a live editor, so preview mode disables them. */}
+                        <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onUndo(); closeMenu(); } }}>
+                            Undo <span className="shortcut">{getShortcutDisplay('Z')}</span>
+                        </div>
+                        <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onRedo(); closeMenu(); } }}>
+                            Redo <span className="shortcut">{getShortcutDisplay('Z', true, true)}</span>
+                        </div>
+                        <div className="menu-divider" />
+                        <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onCut(); closeMenu(); } }}>
+                            Cut <span className="shortcut">{getShortcutDisplay('X')}</span>
+                        </div>
+                        <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onCopy(); closeMenu(); } }}>
+                            Copy <span className="shortcut">{getShortcutDisplay('C')}</span>
+                        </div>
+                        <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onPaste(); closeMenu(); } }}>
+                            Paste <span className="shortcut">{getShortcutDisplay('V')}</span>
+                        </div>
+                        <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onSelectAll(); closeMenu(); } }}>
+                            Select All <span className="shortcut">{getShortcutDisplay('A')}</span>
+                        </div>
+                        <div className="menu-divider" />
                         <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onFind(); closeMenu(); } }}>
                             Find... <span className="shortcut">{getShortcutDisplay('F')}</span>
                         </div>
@@ -258,10 +310,10 @@ export function MenuBar({
                             Go to Line... <span className="shortcut">{getShortcutDisplay('G')}</span>
                         </div>
                         <div className="menu-divider" />
-                        <div className="menu-option disabled" title="Use modifier+/ in editor">
+                        <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onToggleLineComment(); closeMenu(); } }}>
                             Toggle Line Comment <span className="shortcut">{getShortcutDisplay('/')}</span>
                         </div>
-                        <div className="menu-option disabled" title="Use Shift+Alt+F in editor">
+                        <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onFormatDocument(); closeMenu(); } }}>
                             Format Document <span className="shortcut">{isMac ? '⇧⌥F' : 'Shift+Alt+F'}</span>
                         </div>
                     </div>
@@ -291,6 +343,9 @@ export function MenuBar({
                         <div className="menu-option" onClick={() => { onToggleExplorer(); closeMenu(); }}>
                             Toggle Explorer
                         </div>
+                        <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onTogglePreview(); closeMenu(); } }}>
+                            {isPreview ? '✓ Toggle Markdown Preview' : 'Toggle Markdown Preview'} <span className="shortcut">{getShortcutDisplay('V', true, true)}</span>
+                        </div>
                         <div className="menu-option" onClick={() => { onToggleSplitView(); closeMenu(); }}>
                             {splitViewEnabled ? '✓ Split View' : 'Split View'} <span className="shortcut">{getShortcutDisplay('\\')}</span>
                         </div>
@@ -303,6 +358,12 @@ export function MenuBar({
                         <div className="menu-divider" />
                         <div className={`menu-option ${!activeTabPath ? 'disabled' : ''}`} onClick={() => { if (activeTabPath) { onCopyPath(); closeMenu(); } }}>
                             Copy File Path
+                        </div>
+                        {/* macOS gets an equivalent item injected by AppKit, so this is
+                            Windows/Linux only — matching its position at the menu's end. */}
+                        <div className="menu-divider" />
+                        <div className="menu-option" onClick={() => { onToggleFullScreen(); closeMenu(); }}>
+                            {isFullscreen ? 'Exit Full Screen' : 'Enter Full Screen'} <span className="shortcut">F11</span>
                         </div>
                     </div>
                 )}
@@ -331,7 +392,7 @@ export function MenuBar({
                         <div className="menu-submenu">
                             <span>Web and Markup</span>
                             <div className="menu-dropdown-nested">
-                                {[['html','HTML'],['css','CSS'],['javascript','JavaScript'],['typescript','TypeScript'],['php','PHP'],['scss','SCSS'],['sass','Sass'],['less','Less'],['markdown','Markdown']].map(([id, label]) => (
+                                {[['html','HTML'],['css','CSS'],['javascript','JavaScript'],['typescript','TypeScript'],['php','PHP'],['scss','SCSS'],['sass','Sass'],['less','Less'],['coffeescript','CoffeeScript'],['handlebars','Handlebars'],['pug','Pug'],['razor','Razor'],['twig','Twig'],['markdown','Markdown']].map(([id, label]) => (
                                     <div key={id} className="menu-option" onClick={() => { onChangeLanguage(id); closeMenu(); }}>{label}</div>
                                 ))}
                             </div>
@@ -339,7 +400,7 @@ export function MenuBar({
                         <div className="menu-submenu">
                             <span>General Programming</span>
                             <div className="menu-dropdown-nested">
-                                {[['python','Python'],['java','Java'],['csharp','C#'],['go','Go'],['ruby','Ruby'],['swift','Swift'],['kotlin','Kotlin'],['dart','Dart'],['lua','Lua'],['perl','Perl'],['r','R'],['scala','Scala'],['haskell','Haskell'],['elixir','Elixir'],['clojure','Clojure']].map(([id, label]) => (
+                                {[['python','Python'],['java','Java'],['csharp','C#'],['go','Go'],['ruby','Ruby'],['swift','Swift'],['kotlin','Kotlin'],['dart','Dart'],['elixir','Elixir'],['clojure','Clojure'],['groovy','Groovy'],['haskell','Haskell'],['julia','Julia'],['lua','Lua'],['perl','Perl'],['r','R'],['scala','Scala'],['scheme','Scheme'],['fsharp','F#']].map(([id, label]) => (
                                     <div key={id} className="menu-option" onClick={() => { onChangeLanguage(id); closeMenu(); }}>{label}</div>
                                 ))}
                             </div>

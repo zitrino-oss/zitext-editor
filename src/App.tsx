@@ -39,6 +39,10 @@ import { formatXml, formatYaml, validateXml } from './utils/xmlYamlTools';
 import { errorService } from './services/ErrorService';
 import { MIN_FONT_SIZE, FONT_SIZE_STEP, MAX_FONT_SIZE } from './constants';
 import type { editor } from 'monaco-editor';
+import {
+    copySelection, cutSelection, formatDocument, pasteFromClipboard,
+    redo, selectAll, toggleLineComment, undo,
+} from './utils/editorCommands';
 import monaco from './monaco-config';
 import { getModelForTab, modelUriForTab } from './utils/editorModels';
 import { fileWatcher } from './utils/fileWatcher';
@@ -58,6 +62,8 @@ interface HandlersRef {
     handleRevertFile: () => Promise<void>;
     handleToggleTheme: () => void;
     handleToggleWordWrap: () => void;
+    handleToggleReadOnly: () => void;
+    handleFormatDocument: () => void;
     toggleSidebar: () => void;
     handleCopyPath: () => void;
     handleChangeLanguage: (lang: string) => void;
@@ -293,6 +299,11 @@ function App() {
         return leftEditorInstance;
     }, [splitViewEnabled, activePane, leftEditorInstance, rightEditorInstance]);
 
+    // The rendered Markdown body, so Find can search the preview in place rather
+    // than forcing the tab back to source view.
+    const previewBodyRef = useRef<HTMLDivElement>(null);
+    const getPreviewElement = useCallback(() => previewBodyRef.current, []);
+
     // ─── Split view handlers ────────────────────────────────────────────────
 
     const handleToggleSplitView = useCallback(() => {
@@ -485,15 +496,41 @@ function App() {
     const [findOpen, setFindOpen] = useState(false);
     const [findShowReplace, setFindShowReplace] = useState(false);
 
+    // Find works in both modes: against the Monaco model in editor mode, and
+    // against the rendered DOM while a tab shows the Markdown preview (see
+    // FindReplaceBar). Replace has no meaning on rendered output, so that one
+    // — and only that one — drops back to the editor first.
     const handleFind = useCallback(() => {
         setFindShowReplace(false);
         setFindOpen(true);
     }, []);
 
     const handleReplace = useCallback(() => {
+        if (focusedTab?.isPreview) togglePreview(focusedTab.id);
         setFindShowReplace(true);
         setFindOpen(true);
-    }, []);
+    }, [focusedTab, togglePreview]);
+
+    // ─── Edit menu commands (Windows/Linux) ─────────────────────────────────
+    // macOS gets these from the native menubar's PredefinedMenuItems; the in-app
+    // <MenuBar> has no equivalent, so drive the focused editor directly. Clipboard
+    // work goes through utils/editorCommands for the WebView2 reasons noted there.
+
+    const runEditorCommand = useCallback((command: (ed: editor.ICodeEditor) => void | Promise<void>) => {
+        const ed = getActiveEditor();
+        // A disposed instance survives a preview toggle, so require a live model.
+        if (!ed?.getModel()) return;
+        void command(ed);
+    }, [getActiveEditor]);
+
+    const handleUndo = useCallback(() => runEditorCommand(undo), [runEditorCommand]);
+    const handleRedo = useCallback(() => runEditorCommand(redo), [runEditorCommand]);
+    const handleCut = useCallback(() => runEditorCommand(cutSelection), [runEditorCommand]);
+    const handleCopy = useCallback(() => runEditorCommand(copySelection), [runEditorCommand]);
+    const handlePaste = useCallback(() => runEditorCommand(pasteFromClipboard), [runEditorCommand]);
+    const handleSelectAll = useCallback(() => runEditorCommand(selectAll), [runEditorCommand]);
+    const handleToggleLineComment = useCallback(() => runEditorCommand(toggleLineComment), [runEditorCommand]);
+    const handleFormatDocument = useCallback(() => runEditorCommand(formatDocument), [runEditorCommand]);
 
     // ─── Other editor actions ───────────────────────────────────────────────
 
@@ -507,6 +544,32 @@ function App() {
     };
 
     const handleToggleWordWrap = () => updateSettings({ wordWrap: !settings.wordWrap });
+
+    // Full screen. macOS gets "Enter Full Screen" injected into the View menu by
+    // AppKit itself; Windows/Linux get nothing, so drive it through the window
+    // API and expose it on the in-app menubar under the usual F11.
+    const [isFullscreen, setIsFullscreen] = useState(false);
+
+    useEffect(() => {
+        // The window can start full screen (restored session, OS state), so seed
+        // from the real value rather than assuming false.
+        getCurrentWindow().isFullscreen()
+            .then(setIsFullscreen)
+            .catch(() => { /* non-fatal: label just starts at "Enter" */ });
+    }, []);
+
+    const handleToggleFullScreen = useCallback(async () => {
+        const appWindow = getCurrentWindow();
+        try {
+            // Read the live value instead of trusting local state, which can drift
+            // if the window was changed by any other means.
+            const next = !(await appWindow.isFullscreen());
+            await appWindow.setFullscreen(next);
+            setIsFullscreen(next);
+        } catch (error) {
+            errorService.showError('Failed to toggle full screen', error as Error);
+        }
+    }, []);
 
     const handleToggleReadOnly = () => {
         if (focusedTabId) toggleReadOnly(focusedTabId);
@@ -616,6 +679,8 @@ function App() {
         handleRevertFile,
         handleToggleTheme,
         handleToggleWordWrap,
+        handleToggleReadOnly,
+        handleFormatDocument,
         toggleSidebar: handleToggleSidebar,
         handleCopyPath,
         handleChangeLanguage,
@@ -665,6 +730,8 @@ function App() {
             { key: 'v', ctrlOrCmd: true, shift: true, action: () => focusedTabId && togglePreview(focusedTabId) },
             { key: ',', ctrlOrCmd: true, action: () => setSettingsModalOpen(true) },
             { ...kb('wordWrap', { key: 'z', ctrlOrCmd: false, alt: true }), action: () => updateSettings({ wordWrap: !settings.wordWrap }) },
+            // F11 is the Windows/Linux convention; macOS uses its own system item.
+            { key: 'F11', ctrlOrCmd: false, action: () => { void handleToggleFullScreen(); } },
             // Tab switching: Cmd/Ctrl+1-9
             ...([1,2,3,4,5,6,7,8,9].map(n => ({
                 key: String(n),
@@ -738,8 +805,10 @@ function App() {
             await l('menu-replace', () => handlersRef.current?.handleReplace());
             await l('menu-find_in_files', () => setShowFindInFiles(v => !v));
             await l('menu-goto', () => setGoToLineModalOpen(true));
+            await l('menu-format_document', () => handlersRef.current?.handleFormatDocument());
             await l('menu-toggle_theme', () => handlersRef.current?.handleToggleTheme());
             await l('menu-toggle_wrap', () => handlersRef.current?.handleToggleWordWrap());
+            await l('menu-toggle_read_only', () => handlersRef.current?.handleToggleReadOnly());
             await l('menu-toggle_explorer', () => handlersRef.current?.toggleSidebar());
             await l('menu-copy_path', () => handlersRef.current?.handleCopyPath());
             await l('menu-preferences', () => setSettingsModalOpen(true));
@@ -834,6 +903,7 @@ function App() {
         { id: 'toggle-preview',  label: 'Toggle Markdown Preview', description: 'Preview markdown content',  category: 'View',    action: () => focusedTabId && togglePreview(focusedTabId) },
         { id: 'toggle-minimap',  label: 'Toggle Minimap',     description: 'Show or hide the minimap',        category: 'View',    action: () => updateSettings({ showMinimap: !settings.showMinimap }) },
         { id: 'copy-path',       label: 'Copy File Path',     description: 'Copy current file path',          category: 'View',    action: handleCopyPath },
+        { id: 'toggle-fullscreen', label: 'Toggle Full Screen', description: 'Enter or exit full screen',     category: 'View',    action: () => { void handleToggleFullScreen(); } },
         { id: 'preferences',     label: 'Preferences',        description: 'Open editor settings',            category: 'Settings', action: () => setSettingsModalOpen(true) },
         { id: 'keybindings',     label: 'Keyboard Shortcuts', description: 'Edit keyboard shortcuts',         category: 'Settings', action: () => setKeybindingEditorOpen(true) },
         { id: 'diagnostics',    label: 'Show Diagnostics',   description: 'Session health and performance',  category: 'Help',     action: () => setShowDiagnostics(true) },
@@ -878,6 +948,14 @@ function App() {
                     onSaveAs={() => focusedTabId && saveFileAs(focusedTabId)}
                     onClose={() => focusedTabId && handleCloseTab(focusedTabId)}
                     onRevertFile={handleRevertFile}
+                    onUndo={handleUndo}
+                    onRedo={handleRedo}
+                    onCut={handleCut}
+                    onCopy={handleCopy}
+                    onPaste={handlePaste}
+                    onSelectAll={handleSelectAll}
+                    onToggleLineComment={handleToggleLineComment}
+                    onFormatDocument={handleFormatDocument}
                     onFind={handleFind}
                     onFindInFiles={() => setShowFindInFiles(v => !v)}
                     onReplace={handleReplace}
@@ -886,6 +964,7 @@ function App() {
                     onToggleTheme={handleToggleTheme}
                     onToggleWordWrap={handleToggleWordWrap}
                     onToggleReadOnly={handleToggleReadOnly}
+                    onTogglePreview={() => focusedTabId && togglePreview(focusedTabId)}
                     onOpenSettings={() => setSettingsModalOpen(true)}
                     onOpenKeybindings={() => setKeybindingEditorOpen(true)}
                     onToggleExplorer={handleToggleSidebar}
@@ -894,11 +973,14 @@ function App() {
                     onSwapPanes={handleSwapPanes}
                     onChangeLanguage={handleChangeLanguage}
                     onCopyPath={handleCopyPath}
+                    onToggleFullScreen={handleToggleFullScreen}
+                    isFullscreen={isFullscreen}
                     recentFiles={recentFiles}
                     onOpenRecent={handleOpenRecent}
                     settings={settings}
                     hasActiveTab={focusedTab !== null}
                     isReadOnly={focusedTab?.isReadOnly || false}
+                    isPreview={focusedTab?.isPreview || false}
                     activeTabPath={focusedTab?.path || null}
                     splitViewEnabled={splitViewEnabled}
                     hasRightPane={rightPaneTabId !== null}
@@ -932,6 +1014,7 @@ function App() {
                 {showFindInFiles ? (
                     <FindInFiles
                         folderPath={openedFolder}
+                        width={sidebarWidth}
                         onOpenFile={handleOpenFileAtLine}
                         onOpenFolder={async () => {
                             const path = await openFolder();
@@ -993,6 +1076,8 @@ function App() {
                                 showReplace={findShowReplace}
                                 onClose={() => setFindOpen(false)}
                                 getEditor={getActiveEditor}
+                                getPreviewElement={getPreviewElement}
+                                previewActive={!!activeTab.isPreview}
                             />
                             {splitViewEnabled && rightPaneTabId ? (
                                 <SplitView
@@ -1015,7 +1100,7 @@ function App() {
                                     onRightFocus={() => { activePaneRef.current = 'right'; setActivePane('right'); }}
                                 />
                             ) : activeTab.isPreview ? (
-                                <MarkdownPreview content={activeTab.content} theme={settings.theme} />
+                                <MarkdownPreview content={activeTab.content} theme={settings.theme} bodyRef={previewBodyRef} />
                             ) : (
                                 <EditorPanel
                                     modelPath={modelUriForTab(activeTab.id)}

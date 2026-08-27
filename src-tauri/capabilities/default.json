@@ -8,6 +8,8 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-set-title",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-fullscreen",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "dialog:allow-ask"

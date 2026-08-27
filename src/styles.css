@@ -1842,6 +1842,9 @@ body {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  flex-shrink: 0;
+  min-width: 150px;
+  max-width: 600px;
 }
 
 /* Header and search row are shared with FileExplorer (.file-explorer-header,
@@ -1954,6 +1957,7 @@ body {
 
 .find-result-file-name {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2006,6 +2010,7 @@ body {
 
 .find-result-line-content {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3145,6 +3150,23 @@ body {
   border: 2px solid var(--accent-color) !important;
   border-radius: 3px !important;
   box-sizing: border-box;
+}
+
+/* Find matches inside the rendered Markdown preview. Mirrors .fr-match /
+   .fr-current-match above; github-markdown-css styles bare <mark>, so these
+   need to win on specificity. */
+.markdown-body mark.fr-preview-match {
+  background-color: rgba(250, 204, 21, 0.32);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0;
+}
+
+.markdown-body mark.fr-preview-match.fr-preview-current {
+  background-color: rgba(250, 160, 0, 0.45);
+  outline: 2px solid var(--accent-color);
+  outline-offset: -1px;
+  border-radius: 3px;
 }
 
 /* Hide Monaco's built-in find widget when our custom one is active */
