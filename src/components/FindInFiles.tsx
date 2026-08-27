@@ -17,12 +17,13 @@ interface GroupedResult {
 
 interface FindInFilesProps {
     folderPath: string | null;
+    width: number;
     onOpenFile: (path: string, line: number) => void;
     onOpenFolder: () => void;
     onClose: () => void;
 }
 
-export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: FindInFilesProps) {
+export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClose }: FindInFilesProps) {
     const [query, setQuery] = useState('');
     const [caseSensitive, setCaseSensitive] = useState(false);
     const [wholeWord, setWholeWord] = useState(false);
@@ -119,7 +120,7 @@ export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: F
 
     if (!folderPath) {
         return (
-            <div className="find-in-files">
+            <div className="find-in-files" style={{ width: `${width}px` }}>
                 <div className="file-explorer-header">
                     <span className="file-explorer-title">SEARCH</span>
                     <div className="file-explorer-actions">
@@ -140,7 +141,7 @@ export function FindInFiles({ folderPath, onOpenFile, onOpenFolder, onClose }: F
     }
 
     return (
-        <div className="find-in-files">
+        <div className="find-in-files" style={{ width: `${width}px` }}>
             <div className="file-explorer-header">
                 <span className="file-explorer-title">SEARCH</span>
                 <div className="file-explorer-actions">

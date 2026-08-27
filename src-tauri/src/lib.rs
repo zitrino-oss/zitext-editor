@@ -1992,10 +1992,21 @@ fn build_app_menu(
         Some("CmdOrCtrl+Shift+F"),
     )?;
     let m_goto = MenuItem::with_id(handle, "goto", "Go to Line...", true, Some("CmdOrCtrl+G"))?;
+    // Monaco's own binding is Shift+Option+F on macOS; "Alt" maps to Option there.
+    // Matches the in-app menubar on Windows/Linux.
+    let m_format = MenuItem::with_id(
+        handle,
+        "format_document",
+        "Format Document",
+        true,
+        Some("Shift+Alt+F"),
+    )?;
     edit_menu.append(&m_find)?;
     edit_menu.append(&m_replace)?;
     edit_menu.append(&m_find_in_files)?;
     edit_menu.append(&m_goto)?;
+    edit_menu.append(&PredefinedMenuItem::separator(handle)?)?;
+    edit_menu.append(&m_format)?;
 
     // View Menu
     let view_menu = Submenu::with_id(handle, "view", "View", true)?;
@@ -2010,6 +2021,13 @@ fn build_app_menu(
         handle,
         "toggle_wrap",
         "Toggle Word Wrap",
+        true,
+        None::<&str>,
+    )?;
+    let m_read_only = MenuItem::with_id(
+        handle,
+        "toggle_read_only",
+        "Toggle Read-Only",
         true,
         None::<&str>,
     )?;
@@ -2047,6 +2065,8 @@ fn build_app_menu(
     view_menu.append(&m_theme)?;
     view_menu.append(&PredefinedMenuItem::separator(handle)?)?;
     view_menu.append(&m_wrap)?;
+    // Grouped with Word Wrap to match the in-app menubar on Windows/Linux.
+    view_menu.append(&m_read_only)?;
     view_menu.append(&m_explorer)?;
     view_menu.append(&m_preview)?;
     view_menu.append(&PredefinedMenuItem::separator(handle)?)?;

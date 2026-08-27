@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import Editor, { Monaco } from '@monaco-editor/react';
-import type { editor } from 'monaco-editor';
-import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { editor } from 'monaco-editor';
+import { copySelection, cutSelection, pasteFromClipboard } from '../utils/editorCommands';
 import '../monaco-config'; // Configure Monaco workers
 
 interface EditorPanelProps {
@@ -29,7 +29,9 @@ interface EditorPanelProps {
     onCursorChange: (line: number, column: number) => void;
     onScrollChange?: (scrollTop: number, scrollLeft: number) => void;
     onSelectionChange?: (selectionLength: number) => void;
-    onEditorReady?: (editor: editor.IStandaloneCodeEditor) => void;
+    /** Called with the instance on mount, and with null on unmount so callers
+     *  don't keep querying a disposed editor (e.g. while Markdown preview is up). */
+    onEditorReady?: (editor: editor.IStandaloneCodeEditor | null) => void;
     onFocus?: () => void;
 }
 
@@ -298,13 +300,27 @@ export function EditorPanel({
         const pos = editorRef.current.getPosition();
         if (pos && pos.lineNumber === cursorLine && pos.column === cursorColumn) return;
         editorRef.current.setPosition({ lineNumber: cursorLine, column: cursorColumn });
-        editorRef.current.revealLineInCenterIfOutsideViewport(cursorLine);
+        // Immediate, not the default Smooth: an animated reveal fires intermediate
+        // onDidScrollChange events that round-trip through the scrollTop/scrollLeft
+        // sync effect below, which calls setScrollPosition() mid-animation and snaps
+        // the viewport back before it finishes centering (see FindReplaceBar's
+        // revealRangeInCenter for the same race).
+        editorRef.current.revealLineInCenterIfOutsideViewport(cursorLine, editor.ScrollType.Immediate);
     }, [cursorLine, cursorColumn]);
 
     useEffect(() => {
         if (!editorRef.current) return;
         editorRef.current.setScrollPosition({ scrollTop, scrollLeft });
     }, [modelPath, scrollTop, scrollLeft]);
+
+    // Monaco is disposed when this unmounts (toggling Markdown preview does
+    // exactly that). Publish null so consumers stop treating the dead instance
+    // as a live editor — Find checks this to decide whether to search the
+    // editor model or the rendered preview.
+    useEffect(() => () => {
+        editorRef.current = null;
+        onEditorReadyRef.current?.(null);
+    }, []);
 
     const handleEditorWillMount = (monaco: Monaco) => {
         monacoRef.current = monaco;
@@ -365,12 +381,8 @@ export function EditorPanel({
         // context-menu Copy/Cut/Paste rely on document.execCommand, which the Windows
         // WebView2 blocks (notably paste) — so right-click Copy/Paste silently did nothing
         // (QA ZITEXT_V2_004). These overrides make them work consistently cross-platform.
-        const selectedText = () => {
-            const sel = editor.getSelection();
-            const model = editor.getModel();
-            if (!sel || !model || sel.isEmpty()) return '';
-            return model.getValueInRange(sel);
-        };
+        // The implementations live in utils/editorCommands so the Edit menu drives the
+        // exact same code paths.
         editor.addAction({
             id: 'zitext.clipboardCopy',
             label: 'Copy',
@@ -378,7 +390,7 @@ export function EditorPanel({
             contextMenuOrder: 1,
             precondition: 'editorTextFocus',
             keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC],
-            run: async () => { const t = selectedText(); if (t) await writeText(t); },
+            run: (ed) => copySelection(ed),
         });
         editor.addAction({
             id: 'zitext.clipboardCut',
@@ -387,13 +399,7 @@ export function EditorPanel({
             contextMenuOrder: 2,
             precondition: 'editorTextFocus && !editorReadonly',
             keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX],
-            run: async (ed) => {
-                const t = selectedText();
-                if (!t) return;
-                await writeText(t);
-                const sel = ed.getSelection();
-                if (sel) ed.executeEdits('clipboard', [{ range: sel, text: '', forceMoveMarkers: true }]);
-            },
+            run: (ed) => cutSelection(ed),
         });
         editor.addAction({
             id: 'zitext.clipboardPaste',
@@ -402,13 +408,7 @@ export function EditorPanel({
             contextMenuOrder: 3,
             precondition: 'editorTextFocus && !editorReadonly',
             keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV],
-            run: async (ed) => {
-                const text = await readText();
-                if (text == null) return;
-                const sel = ed.getSelection();
-                if (sel) ed.executeEdits('clipboard', [{ range: sel, text, forceMoveMarkers: true }]);
-                ed.focus();
-            },
+            run: (ed) => pasteFromClipboard(ed),
         });
 
         // The built-in Copy/Cut/Paste that these actions replace are removed from the

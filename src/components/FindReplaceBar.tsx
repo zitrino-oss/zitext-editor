@@ -1,11 +1,23 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { editor } from 'monaco-editor';
+import { editor } from 'monaco-editor';
+import {
+    clearPreviewHighlights,
+    highlightPreviewMatches,
+    setCurrentPreviewMatch,
+} from '../utils/previewSearch';
 
 interface FindReplaceBarProps {
     isOpen: boolean;
     showReplace: boolean;
     onClose: () => void;
     getEditor: () => editor.IStandaloneCodeEditor | null;
+    /**
+     * The rendered Markdown body, when the focused tab is previewing. Monaco is
+     * unmounted in that mode, so the search runs against this DOM instead.
+     */
+    getPreviewElement?: () => HTMLElement | null;
+    /** Flips when preview is toggled, so the search re-runs against the new target. */
+    previewActive?: boolean;
 }
 
 interface MatchState {
@@ -15,7 +27,14 @@ interface MatchState {
 
 const WORD_SEPARATORS = '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?_';
 
-export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: FindReplaceBarProps) {
+export function FindReplaceBar({
+    isOpen,
+    showReplace,
+    onClose,
+    getEditor,
+    getPreviewElement,
+    previewActive = false,
+}: FindReplaceBarProps) {
     const [search, setSearch] = useState('');
     const [replace, setReplace] = useState('');
     const [matchCase, setMatchCase] = useState(false);
@@ -29,6 +48,13 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
     const decoratedModelRef = useRef<editor.ITextModel | null>(null);
     const matchRangesRef = useRef<editor.FindMatch[]>([]);
     const currentIdxRef = useRef(0);
+    // Preview-mode search state: the body we highlighted into, and the marks we
+    // put there. Kept separate from the Monaco decoration refs above so toggling
+    // preview can tear down exactly one of the two.
+    const previewRootRef = useRef<HTMLElement | null>(null);
+    const previewMarksRef = useRef<HTMLElement[]>([]);
+    const suspendObserverRef = useRef(false);
+    const [inPreview, setInPreview] = useState(false);
 
     useEffect(() => { setReplaceVisible(showReplace); }, [showReplace]);
 
@@ -46,8 +72,17 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
                 const text = ed.getModel()?.getValueInRange(sel) || '';
                 if (text && !text.includes('\n')) setSearch(text);
             }
+            return;
         }
-    }, [isOpen, getEditor]);
+        // Preview mode: seed from whatever the user highlighted in the rendered
+        // output, matching the editor-mode behaviour above.
+        const root = getPreviewElement?.();
+        const domSel = root ? window.getSelection() : null;
+        if (root && domSel && !domSel.isCollapsed && root.contains(domSel.anchorNode)) {
+            const text = domSel.toString();
+            if (text && !text.includes('\n')) setSearch(text);
+        }
+    }, [isOpen, getEditor, getPreviewElement]);
 
     // Clear decorations helper
     const clearDeco = useCallback(() => {
@@ -62,9 +97,60 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
         matchRangesRef.current = [];
     }, []);
 
+    // Tear down preview highlights (mirror of clearDeco for the DOM path).
+    const clearPreview = useCallback(() => {
+        const root = previewRootRef.current;
+        if (root) {
+            suspendObserverRef.current = true;
+            clearPreviewHighlights(root);
+            setTimeout(() => { suspendObserverRef.current = false; }, 0);
+        }
+        previewRootRef.current = null;
+        previewMarksRef.current = [];
+    }, []);
+
     // Core search function
     const doSearch = useCallback((resetIndex = false) => {
         const ed = getEditor();
+        // Monaco is unmounted while previewing, so fall back to the rendered DOM
+        // rather than bailing out and reporting a false "0 of 0". A disposed
+        // editor reports a null model, so check that too — otherwise a stale
+        // instance held after unmount would shadow the preview path entirely.
+        const hasLiveEditor = !!ed?.getModel();
+        const previewRoot = hasLiveEditor ? null : (getPreviewElement?.() ?? null);
+
+        if (previewRoot) {
+            setInPreview(true);
+            clearDeco(); // drop editor decorations left over from source mode
+            if (previewRootRef.current && previewRootRef.current !== previewRoot) {
+                clearPreviewHighlights(previewRootRef.current);
+            }
+            previewRootRef.current = previewRoot;
+
+            // Suspend the re-render observer: the wrapping below is our own
+            // mutation and must not retrigger the search.
+            suspendObserverRef.current = true;
+            const marks = search
+                ? highlightPreviewMatches(previewRoot, search, { matchCase, wholeWord, useRegex })
+                : (clearPreviewHighlights(previewRoot), []);
+            setTimeout(() => { suspendObserverRef.current = false; }, 0);
+
+            previewMarksRef.current = marks;
+            if (resetIndex) currentIdxRef.current = 0;
+            const idx = marks.length > 0 ? Math.min(currentIdxRef.current, marks.length - 1) : 0;
+            currentIdxRef.current = idx;
+
+            if (marks.length > 0) {
+                setCurrentPreviewMatch(marks, idx);
+                setMatches({ total: marks.length, current: idx + 1 });
+            } else {
+                setMatches({ total: 0, current: 0 });
+            }
+            return;
+        }
+
+        setInPreview(false);
+        clearPreview(); // leaving preview — remove its marks before editor search
         if (!ed) return;
         const model = ed.getModel();
         if (
@@ -109,7 +195,12 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
 
             if (found.length > 0) {
                 ed.setSelection(found[idx].range);
-                ed.revealRangeInCenter(found[idx].range);
+                // Immediate, not the default Smooth: an animated reveal fires several
+                // intermediate onDidScrollChange events, each of which round-trips through
+                // React state and back into EditorPanel's scroll-sync effect, which calls
+                // setScrollPosition() with that mid-animation value — snapping the viewport
+                // back before the animation finishes centering on the match.
+                ed.revealRangeInCenter(found[idx].range, editor.ScrollType.Immediate);
                 setMatches({ total: found.length, current: idx + 1 });
             } else {
                 setMatches({ total: 0, current: 0 });
@@ -119,36 +210,62 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
             clearDeco();
             setMatches({ total: 0, current: 0 });
         }
-    }, [search, matchCase, wholeWord, useRegex, getEditor, clearDeco]);
+    }, [search, matchCase, wholeWord, useRegex, getEditor, getPreviewElement, clearDeco, clearPreview]);
 
-    // Re-run search when search text or options change
+    // Re-run search when the query, the options, or the target (editor vs
+    // preview) changes. previewActive is in the deps so toggling preview while
+    // the bar is open re-points the search instead of leaving it stale.
     useEffect(() => {
         if (isOpen) doSearch(true);
-    }, [search, matchCase, wholeWord, useRegex, isOpen, doSearch]);
+    }, [search, matchCase, wholeWord, useRegex, isOpen, previewActive, doSearch]);
+
+    // The preview renders its HTML asynchronously (marked.parse is awaited), so
+    // the body can still be empty when the bar first searches it. Re-run once the
+    // real content lands — and on any later re-render.
+    useEffect(() => {
+        if (!isOpen || !previewActive) return;
+        const root = getPreviewElement?.();
+        if (!root) return;
+        const observer = new MutationObserver(() => {
+            if (suspendObserverRef.current) return; // our own <mark> wrapping
+            previewMarksRef.current = [];
+            doSearch(true);
+        });
+        observer.observe(root, { childList: true, subtree: true, characterData: true });
+        return () => observer.disconnect();
+    }, [isOpen, previewActive, getPreviewElement, doSearch]);
 
     // Monaco can keep the editor instance while swapping its model. Clear IDs
     // against the old model and immediately rebuild matches for the new one.
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen || previewActive) return;
         const ed = getEditor();
-        if (!ed) return;
+        if (!ed?.getModel()) return;
         const subscription = ed.onDidChangeModel(() => {
             clearDeco();
             doSearch(true);
         });
         return () => subscription.dispose();
-    }, [isOpen, getEditor, clearDeco, doSearch]);
+    }, [isOpen, previewActive, getEditor, clearDeco, doSearch]);
 
-    useEffect(() => clearDeco, [clearDeco]);
+    useEffect(() => () => { clearDeco(); clearPreview(); }, [clearDeco, clearPreview]);
 
     // Navigate matches
     const navigate = useCallback((dir: 1 | -1) => {
-        const found = matchRangesRef.current;
-        if (found.length === 0) return;
+        const previewMarks = previewRootRef.current ? previewMarksRef.current : null;
+        const total = previewMarks ? previewMarks.length : matchRangesRef.current.length;
+        if (total === 0) return;
         let idx = currentIdxRef.current + dir;
-        if (idx >= found.length) idx = 0;
-        if (idx < 0) idx = found.length - 1;
+        if (idx >= total) idx = 0;
+        if (idx < 0) idx = total - 1;
         currentIdxRef.current = idx;
+        if (previewMarks) {
+            // Marks are already in the DOM — just move the "current" styling and
+            // scroll, instead of re-wrapping the whole document on every step.
+            setCurrentPreviewMatch(previewMarks, idx);
+            setMatches({ total, current: idx + 1 });
+            return;
+        }
         doSearch();
     }, [doSearch]);
 
@@ -173,10 +290,11 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
 
     const handleClose = useCallback(() => {
         clearDeco();
+        clearPreview();
         setSearch('');
         onClose();
         getEditor()?.focus();
-    }, [clearDeco, onClose, getEditor]);
+    }, [clearDeco, clearPreview, onClose, getEditor]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Escape') {
@@ -196,10 +314,13 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
 
     return (
         <div className="fr-bar" onKeyDown={handleKeyDown}>
+            {/* Replace can't act on rendered output, so the toggle is inert while
+                previewing — Ctrl+H drops back to the editor instead. */}
             <button
-                className={`fr-toggle-btn ${replaceVisible ? 'open' : ''}`}
+                className={`fr-toggle-btn ${replaceVisible && !inPreview ? 'open' : ''}`}
                 onClick={() => setReplaceVisible(v => !v)}
-                title={replaceVisible ? 'Hide Replace' : 'Show Replace'}
+                title={inPreview ? 'Replace is unavailable in Markdown preview' : replaceVisible ? 'Hide Replace' : 'Show Replace'}
+                disabled={inPreview}
             >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="6 9 12 15 18 9" />
@@ -245,7 +366,7 @@ export function FindReplaceBar({ isOpen, showReplace, onClose, getEditor }: Find
                 </div>
 
                 {/* Replace row */}
-                {replaceVisible && (
+                {replaceVisible && !inPreview && (
                     <div className="fr-row">
                         <div className="fr-input-wrap">
                             <input

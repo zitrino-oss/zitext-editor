@@ -6,9 +6,11 @@ import 'github-markdown-css/github-markdown.css';
 interface MarkdownPreviewProps {
     content: string;
     theme: 'light' | 'dark';
+    /** Exposes the rendered body so Find can search the preview in place. */
+    bodyRef?: React.Ref<HTMLDivElement>;
 }
 
-export function MarkdownPreview({ content, theme }: MarkdownPreviewProps) {
+export function MarkdownPreview({ content, theme, bodyRef }: MarkdownPreviewProps) {
     const [html, setHtml] = useState('');
 
     useEffect(() => {
@@ -64,6 +66,7 @@ export function MarkdownPreview({ content, theme }: MarkdownPreviewProps) {
     return (
         <div className={`markdown-preview-container ${theme}`}>
             <div
+                ref={bodyRef}
                 className="markdown-body"
                 dangerouslySetInnerHTML={{ __html: html }}
                 style={{
