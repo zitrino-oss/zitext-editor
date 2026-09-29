@@ -34,7 +34,7 @@ tempfile = "3"
 sha2 = "0.10.9"
 tokio = { version = "1", features = ["sync", "time"] }
 url = "2"
-dirs = "6"
+dirs = "7"
 
 # libc is Unix-only — keep this section at the very bottom so any future
 # cross-platform deps appended to [dependencies] don't get silently scoped
