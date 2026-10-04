@@ -476,7 +476,8 @@ impl Default for AppSettings {
             // JetBrains Mono is bundled, so it resolves on every platform; the
             // rest of the chain only matters if the webview fails to load it.
             // Must match DEFAULT_SETTINGS.fontFamily in useSettingsManager.ts.
-            font_family: r#""JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace"#.to_string(),
+            font_family: r#""JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace"#
+                .to_string(),
             font_size: 14,
             word_wrap: false,
             recent_files: Vec::new(),
