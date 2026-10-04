@@ -106,6 +106,7 @@ export function CommandPalette({ isOpen, onClose, commands }: CommandPaletteProp
                     <div className="cp-footer">
                         <span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> navigate</span>
                         <span><kbd>&crarr;</kbd> select</span>
+                        <span className="cp-count">{filteredCommands.length} of {commands.length}</span>
                     </div>
                 )}
             </div>

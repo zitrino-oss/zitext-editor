@@ -2,6 +2,12 @@
 // navigator.platform is deprecated; use userAgent instead
 export const isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent);
 
+// Windows is the only platform that runs undecorated (see tauri.windows.conf.json),
+// so it is also the only one that draws its own titlebar and window buttons.
+// macOS keeps the native chrome plus the AppKit menu; Linux keeps the WM's frame,
+// where an undecorated window loses reliable edge-resize under several compositors.
+export const isWindows = /Windows/i.test(navigator.userAgent);
+
 export const modKey = isMac ? 'Cmd' : 'Ctrl';
 
 export interface ShortcutHandler {
@@ -10,6 +16,15 @@ export interface ShortcutHandler {
     shift?: boolean;
     alt?: boolean;
     action: () => void;
+    /** Also stop the event reaching the editor.
+     *
+     *  preventDefault alone only cancels the browser's own action; the event
+     *  still travels on to Monaco, which checks the keystroke itself rather
+     *  than whether anyone has handled it. That is harmless for most bindings,
+     *  but matters for any key Monaco treats as a chord prefix — Ctrl+K, which
+     *  starts Ctrl+K Ctrl+C and friends. Without this the editor would quietly
+     *  enter chord mode behind the folder dialog and eat the next keystroke. */
+    stopPropagation?: boolean;
 }
 
 export function normalizeShortcutKey(key: string): string {
@@ -52,6 +67,7 @@ export function handleKeyDown(
             altMatch
         ) {
             event.preventDefault();
+            if (handler.stopPropagation) event.stopPropagation();
             handler.action();
             return true;
         }

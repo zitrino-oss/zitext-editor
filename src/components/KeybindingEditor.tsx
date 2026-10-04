@@ -21,6 +21,7 @@ const mod = isMac ? 'Cmd' : 'Ctrl';
 const COMMANDS: CommandDef[] = [
     { id: 'new', label: 'New File', defaultKey: `${mod}+N` },
     { id: 'open', label: 'Open File', defaultKey: `${mod}+O` },
+    { id: 'openFolder', label: 'Open Folder', defaultKey: `${mod}+K` },
     { id: 'save', label: 'Save', defaultKey: `${mod}+S` },
     { id: 'saveAs', label: 'Save As', defaultKey: `${mod}+Shift+S` },
     { id: 'close', label: 'Close Tab', defaultKey: `${mod}+W` },
@@ -128,7 +129,7 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
                 <div className="kb-header">
                     <div>
                         <h2 className="kb-title">Keyboard Shortcuts</h2>
-                        <p className="kb-subtitle">Click a shortcut to reassign it</p>
+                        <p className="kb-subtitle">Click a binding, then press the new combination</p>
                     </div>
                     <button className="kb-close" onClick={onClose}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -139,7 +140,7 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
                     {captureError && <p className="kb-capture-error" role="alert">{captureError}</p>}
                     <div className="kb-list-header">
                         <span>Command</span>
-                        <span>Shortcut</span>
+                        <span>Binding</span>
                     </div>
                     {COMMANDS.map(command => {
                         const isEditing = editingCommand === command.id;
@@ -148,8 +149,16 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
                         return (
                             <div key={command.id} className={`kb-row ${isEditing ? 'editing' : ''}`}>
                                 <span className="kb-label">
+                                    {/* Leading marker: the row being captured, or one whose
+                                        binding has been changed from the default. Always
+                                        rendered so the label text does not shift when it
+                                        appears mid-capture. */}
+                                    <span
+                                        className={`kb-custom-dot${isEditing || isCustom ? ' visible' : ''}`}
+                                        title={isEditing ? 'Awaiting new binding' : 'Custom binding'}
+                                        aria-hidden="true"
+                                    />
                                     {command.label}
-                                    {isCustom && <span className="kb-custom-dot" title="Custom binding" />}
                                 </span>
                                 <div className="kb-action">
                                     {isEditing ? (
@@ -186,10 +195,10 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
                 </div>
 
                 <div className="kb-footer">
-                    <button className="s-btn s-btn-cancel" onClick={handleResetAll}>Reset All</button>
+                    <button className="s-btn s-btn-cancel" onClick={handleResetAll}>Reset all</button>
                     <div className="kb-footer-right">
                         <button className="s-btn s-btn-cancel" onClick={onClose}>Cancel</button>
-                        <button className="s-btn s-btn-save" onClick={handleSave}>Save</button>
+                        <button className="s-btn s-btn-save" onClick={handleSave}>Done</button>
                     </div>
                 </div>
             </div>

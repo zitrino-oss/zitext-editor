@@ -32,8 +32,11 @@ export interface DiskVersion {
 
 export interface Settings {
   // Appearance, recent files, and last session
-  theme: 'light' | 'dark';
+  theme: 'light' | 'dark' | 'system';
+  /** Editor code font. */
   fontFamily: string;
+  /** App chrome typeface — distinct from the editor font above. */
+  uiFont: string;
   fontSize: number;
   wordWrap: boolean;
   recentFiles: string[];

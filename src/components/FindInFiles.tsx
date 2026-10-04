@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { FileIcon } from '../utils/fileIcons';
 
 interface SearchMatch {
     file_path: string;
@@ -28,6 +29,8 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
     const [caseSensitive, setCaseSensitive] = useState(false);
     const [wholeWord, setWholeWord] = useState(false);
     const [results, setResults] = useState<GroupedResult[]>([]);
+    // Wall-clock seconds for the last completed search, shown beside the summary.
+    const [elapsed, setElapsed] = useState<number | null>(null);
     const [isSearching, setIsSearching] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
     const [totalMatches, setTotalMatches] = useState(0);
@@ -52,6 +55,7 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
 
         setIsSearching(true);
         setSearchError(null);
+        const startedAt = performance.now();
 
         try {
             const matches = await invoke<SearchMatch[]>('search_in_files', {
@@ -78,6 +82,7 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
 
             setResults(groupedResults);
             setTotalMatches(matches.length);
+            setElapsed((performance.now() - startedAt) / 1000);
             setSearchedQuery(q);
         } catch (err) {
             if (requestId !== requestIdRef.current) return;
@@ -155,6 +160,10 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
             </div>
 
             <div className="file-explorer-search">
+                <svg className="find-in-files-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+                    <circle cx="11" cy="11" r="8" />
+                    <path d="M21 21l-4.35-4.35" />
+                </svg>
                 <input
                     ref={inputRef}
                     type="text"
@@ -211,8 +220,13 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
 
             {totalMatches > 0 && (
                 <div className="find-in-files-summary">
-                    {totalMatches} result{totalMatches !== 1 ? 's' : ''} in {results.length} file{results.length !== 1 ? 's' : ''}
-                    {totalMatches >= 500 && ' (limit reached)'}
+                    <span>
+                        {totalMatches} result{totalMatches !== 1 ? 's' : ''} &middot; {results.length} file{results.length !== 1 ? 's' : ''}
+                        {totalMatches >= 500 && ' (limit reached)'}
+                    </span>
+                    {elapsed !== null && (
+                        <span className="find-in-files-timing">{elapsed.toFixed(2)} s</span>
+                    )}
                 </div>
             )}
 
@@ -231,6 +245,11 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
                                 title={group.filePath}
                             >
                                 <span className="find-result-file-arrow">{isCollapsed ? '▶' : '▼'}</span>
+                                {/* Same badge the tabs and explorer use, so one file
+                                    type looks the same everywhere. */}
+                                <span className="find-result-file-icon" aria-hidden="true">
+                                    <FileIcon name={group.fileName} />
+                                </span>
                                 <span className="find-result-file-name">{group.fileName}</span>
                                 <span className="find-result-file-count">{group.matches.length}</span>
                             </button>

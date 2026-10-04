@@ -8,7 +8,18 @@ interface SettingsModalProps {
     onSave: (settings: Partial<Settings>) => void;
 }
 
+/* Chrome typefaces, all bundled in public/fonts.css. Space Grotesk is the
+   default; the earlier defaults stay selectable rather than being dropped. */
+const UI_FONTS = [
+    { value: '"Space Grotesk", system-ui, sans-serif', label: 'Space Grotesk' },
+    { value: '"Geist", system-ui, sans-serif', label: 'Geist Sans' },
+    { value: '"IBM Plex Sans", "Segoe UI", Arial, sans-serif', label: 'IBM Plex Sans' },
+    { value: '"Inter", system-ui, sans-serif', label: 'Inter' },
+    { value: 'system-ui, sans-serif', label: 'System UI' },
+];
+
 const FONT_FAMILIES = [
+    { value: '"IBM Plex Mono", "Cascadia Mono", Consolas, monospace', label: 'IBM Plex Mono' },
     { value: '"Consolas", "Courier New", monospace', label: 'Consolas' },
     { value: '"Courier New", Courier, monospace', label: 'Courier New' },
     { value: '"Menlo", "Consolas", "JetBrains Mono", monospace', label: 'Menlo' },
@@ -21,13 +32,6 @@ const FONT_FAMILIES = [
     { value: '"Space Mono", "Courier New", Courier, monospace', label: 'Space Mono' },
     { value: '"Courier Prime", "Courier New", Courier, monospace', label: 'Courier Prime' },
     { value: 'monospace', label: 'System Monospace' },
-];
-
-const EDITOR_THEMES = [
-    { value: 'vs', label: 'Light' },
-    { value: 'vs-dark', label: 'Dark' },
-    { value: 'hc-black', label: 'High Contrast Dark' },
-    { value: 'hc-light', label: 'High Contrast Light' },
 ];
 
 type SettingsTab = 'editor' | 'files' | 'privacy' | 'advanced';
@@ -200,12 +204,15 @@ function Dropdown({ value, options, onChange, ariaLabel }: {
     );
 }
 
-function SelectRow({ label, value, onChange, options }: {
-    label: string; value: string | number; onChange: (v: string) => void; options: DropdownOption[];
+function SelectRow({ label, hint, value, onChange, options }: {
+    label: string; hint?: string; value: string | number; onChange: (v: string) => void; options: DropdownOption[];
 }) {
     return (
         <div className="s-row">
-            <span className="s-row-label">{label}</span>
+            <span className="s-row-label">
+                {label}
+                {hint && <span className="s-row-hint">{hint}</span>}
+            </span>
             <Dropdown value={value} options={options} onChange={onChange} ariaLabel={label} />
         </div>
     );
@@ -231,6 +238,65 @@ function NumberRow({ label, value, onChange, min, max, step }: {
     );
 }
 
+/* Segmented control — for a short, mutually exclusive set where seeing all the
+   options at once beats opening a dropdown. */
+function SegmentedRow({ label, hint, value, onChange, options }: {
+    label: string;
+    hint?: string;
+    value: string;
+    onChange: (v: string) => void;
+    options: { value: string; label: string }[];
+}) {
+    return (
+        <div className="s-row">
+            <span className="s-row-label">
+                {label}
+                {hint && <span className="s-row-hint">{hint}</span>}
+            </span>
+            <div className="s-segmented" role="group" aria-label={label}>
+                {options.map(opt => (
+                    <button
+                        key={opt.value}
+                        type="button"
+                        className={`s-segment${value === opt.value ? ' active' : ''}`}
+                        aria-pressed={value === opt.value}
+                        onClick={() => onChange(opt.value)}
+                    >
+                        {opt.label}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+/* Slider plus a readout, so a value with a sensible range can be dragged
+   instead of typed. */
+function SliderRow({ label, hint, value, onChange, min, max }: {
+    label: string; hint?: string; value: number; onChange: (v: number) => void; min: number; max: number;
+}) {
+    return (
+        <div className="s-row">
+            <span className="s-row-label">
+                {label}
+                {hint && <span className="s-row-hint">{hint}</span>}
+            </span>
+            <div className="s-slider-group">
+                <input
+                    type="range"
+                    className="s-slider"
+                    min={min}
+                    max={max}
+                    value={value}
+                    aria-label={label}
+                    onChange={(e) => onChange(parseInt(e.target.value))}
+                />
+                <span className="s-slider-value">{value}</span>
+            </div>
+        </div>
+    );
+}
+
 function SectionHeader({ title }: { title: string }) {
     return <div className="s-section-header">{title}</div>;
 }
@@ -243,11 +309,11 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
     const [activeTab, setActiveTab] = useState<SettingsTab>('editor');
     const [theme, setTheme] = useState(settings.theme);
     const [fontFamily, setFontFamily] = useState(settings.fontFamily);
+    const [uiFont, setUiFont] = useState(settings.uiFont);
     const [fontSize, setFontSize] = useState(settings.fontSize);
     const [wordWrap, setWordWrap] = useState(settings.wordWrap);
     const [autosave, setAutosave] = useState(settings.autosave);
     const [autosaveDelay, setAutosaveDelay] = useState(settings.autosaveDelay);
-    const [editorTheme, setEditorTheme] = useState(settings.editorTheme);
     const [showMinimap, setShowMinimap] = useState(settings.showMinimap);
     const [enableColumnSelection, setEnableColumnSelection] = useState(settings.enableColumnSelection);
     const [tabSize, setTabSize] = useState(settings.tabSize);
@@ -259,11 +325,11 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
         if (!isOpen) return;
         setTheme(settings.theme);
         setFontFamily(settings.fontFamily);
+        setUiFont(settings.uiFont);
         setFontSize(settings.fontSize);
         setWordWrap(settings.wordWrap);
         setAutosave(settings.autosave);
         setAutosaveDelay(settings.autosaveDelay);
-        setEditorTheme(settings.editorTheme);
         setShowMinimap(settings.showMinimap);
         setEnableColumnSelection(settings.enableColumnSelection);
         setTabSize(settings.tabSize);
@@ -276,8 +342,8 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
 
     const handleSave = () => {
         onSave({
-            theme, fontFamily, fontSize, wordWrap, autosave, autosaveDelay,
-            editorTheme, showMinimap, enableColumnSelection, tabSize,
+            theme, fontFamily, uiFont, fontSize, wordWrap, autosave, autosaveDelay,
+            showMinimap, enableColumnSelection, tabSize,
             insertSpaces, formatOnSave, checkForUpdates,
         });
         onClose();
@@ -310,11 +376,16 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
                         {activeTab === 'editor' && (
                             <>
                                 <SectionHeader title="Appearance" />
-                                <SelectRow label="Theme" value={theme} onChange={(v) => setTheme(v as 'light' | 'dark')}
-                                    options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} />
-                                <SelectRow label="Editor Theme" value={editorTheme} onChange={setEditorTheme} options={EDITOR_THEMES} />
-                                <SelectRow label="Font Family" value={fontFamily} onChange={setFontFamily} options={FONT_FAMILIES} />
-                                <NumberRow label="Font Size" value={fontSize} onChange={setFontSize} min={8} max={72} />
+                                <SegmentedRow label="Theme" value={theme} onChange={(v) => setTheme(v as 'light' | 'dark' | 'system')}
+                                    options={[
+                                        { value: 'light', label: 'Light' },
+                                        { value: 'dark', label: 'Dark' },
+                                        { value: 'system', label: 'System' },
+                                    ]} />
+                                <SelectRow label="UI font" hint="Space Grotesk is the ZITEXT default"
+                                    value={uiFont} onChange={setUiFont} options={UI_FONTS} />
+                                <SelectRow label="Code font" value={fontFamily} onChange={setFontFamily} options={FONT_FAMILIES} />
+                                <SliderRow label="Font size" value={fontSize} onChange={setFontSize} min={8} max={32} />
 
                                 <SectionHeader title="Indentation" />
                                 <SelectRow label="Tab Size" value={tabSize} onChange={(v) => setTabSize(parseInt(v))}

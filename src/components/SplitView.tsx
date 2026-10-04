@@ -86,7 +86,7 @@ export function SplitView({
                     {leftTab.title}
                 </div>
                 {leftTab.isPreview ? (
-                    <MarkdownPreview content={leftTab.content} theme={settings.theme} />
+                    <MarkdownPreview content={leftTab.content} />
                 ) : (
                     <EditorPanel
                         modelPath={modelUriForTab(leftTab.id)}
@@ -129,7 +129,7 @@ export function SplitView({
                             {rightTab.title}
                         </div>
                         {rightTab.isPreview ? (
-                            <MarkdownPreview content={rightTab.content} theme={settings.theme} />
+                            <MarkdownPreview content={rightTab.content} />
                         ) : (
                             <EditorPanel
                                 modelPath={modelUriForTab(rightTab.id)}

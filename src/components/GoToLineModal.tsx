@@ -52,16 +52,22 @@ export function GoToLineModal({ isOpen, onClose, onGoToLine, maxLine }: GoToLine
                     blocks submit so our own message never showed. */}
                 <form noValidate onSubmit={handleSubmit}>
                     <div className="modal-body">
-                        <input
-                            ref={inputRef}
-                            type="number"
-                            className="modal-input"
-                            placeholder={`Line number (1-${Math.max(maxLine, 1)})`}
-                            value={lineNumber}
-                            onChange={(e) => setLineNumber(e.target.value)}
-                            min="1"
-                            max={Math.max(maxLine, 1)}
-                        />
+                        {/* The range sits inside the field as a trailing hint rather
+                            than in the placeholder, so it stays visible while typing. */}
+                        <div className="modal-input-wrap">
+                            <input
+                                ref={inputRef}
+                                type="text"
+                                inputMode="numeric"
+                                className="modal-input modal-input-bare"
+                                aria-label={`Line number, 1 to ${Math.max(maxLine, 1)}`}
+                                value={lineNumber}
+                                onChange={(e) => setLineNumber(e.target.value.replace(/[^0-9]/g, ''))}
+                            />
+                            <span className="modal-input-hint" aria-hidden="true">
+                                1 – {Math.max(maxLine, 1).toLocaleString()}
+                            </span>
+                        </div>
                     </div>
                     <div className="modal-footer">
                         <button type="button" className="modal-button" onClick={onClose}>
