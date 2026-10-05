@@ -7,10 +7,9 @@ interface DiagnosticsPanelProps {
     isOpen: boolean;
     onClose: () => void;
     tabCount: number;
-    theme: 'light' | 'dark';
 }
 
-export function DiagnosticsPanel({ isOpen, onClose, tabCount, theme }: DiagnosticsPanelProps) {
+export function DiagnosticsPanel({ isOpen, onClose, tabCount }: DiagnosticsPanelProps) {
     const [version, setVersion] = useState('');
     const [health, setHealth] = useState<SessionHealthSummary | null>(null);
     const [perfData, setPerfData] = useState<Record<string, { count: number; avg: number; min: number; max: number }>>({});
@@ -53,7 +52,7 @@ export function DiagnosticsPanel({ isOpen, onClose, tabCount, theme }: Diagnosti
 
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className={`modal diagnostics-modal ${theme}`} onClick={(e) => e.stopPropagation()}>
+            <div className="modal diagnostics-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="modal-header">
                     <h3>Diagnostics</h3>
                     <button className="modal-close" onClick={onClose}>×</button>

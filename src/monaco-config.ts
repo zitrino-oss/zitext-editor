@@ -76,4 +76,77 @@ if (typeof document !== 'undefined' && 'fonts' in document) {
   document.fonts.addEventListener('loadingdone', () => monaco.editor.remeasureFonts());
 }
 
+/* Monaco's stock vs-dark paints the canvas #1e1e1e, which is a different shade
+   from the app's own --bg. That left a visible seam between the editor and the
+   chrome around it. These themes take their surface colours from the design
+   tokens instead, so the two are literally the same colour; syntax colours are
+   inherited from the base theme and left alone.
+
+   Defined here so a theme name always exists before the first editor mounts.
+   App.tsx redefines them from the live tokens once a theme is resolved, which
+   is what makes them follow a light/dark switch. */
+export const ZITEXT_THEME = 'zitext';
+
+/* Monaco rejects a colour it cannot parse by throwing, and this runs from an
+   effect — an exception here would take down the whole tree rather than just
+   leaving the editor on its previous theme. Hence the sanitising and the catch. */
+export function defineEditorTheme(
+    isDark: boolean,
+    token: (name: string, fallback: string) => string,
+): string {
+    /* Monaco accepts #rrggbb and #rrggbbaa only — the three- and four-digit CSS
+       shorthands make it throw "Illegal value for token color".
+
+       That matters because the values arrive from the stylesheet, not from this
+       file: the production CSS minifier rewrites #ffffff to #fff, so a token
+       written six digits in tokens.css reaches here as three in a build (never
+       in dev, which is why this only ever showed up in a packaged app). Light
+       --bg is exactly such a value, so defineTheme threw on every switch to
+       light and the editor stayed on the dark theme while the chrome changed.
+
+       So expand the shorthand rather than pass it through. Anything still
+       unparseable (a computed rgb(), a stray var(), an empty token) falls back. */
+    const normalise = (value: string): string | null => {
+        const v = value.trim();
+        if (/^#([0-9a-f]{6}|[0-9a-f]{8})$/i.test(v)) return v;
+        if (/^#[0-9a-f]{3,4}$/i.test(v)) return '#' + v.slice(1).replace(/./g, (c) => c + c);
+        return null;
+    };
+
+    const hex = (name: string, fallback: string): string =>
+        normalise(token(name, fallback)) ?? normalise(fallback) ?? (isDark ? '#000000' : '#ffffff');
+
+    const bg = hex('--bg', isDark ? '#15171b' : '#ffffff');
+
+    try {
+        monaco.editor.defineTheme(ZITEXT_THEME, {
+            base: isDark ? 'vs-dark' : 'vs',
+            inherit: true,
+            rules: [],
+            colors: {
+                'editor.background': bg,
+                'editorGutter.background': bg,
+                'minimap.background': bg,
+                'editorWidget.background': bg,
+                'editorLineNumber.foreground': hex('--text-dim', isDark ? '#626a77' : '#7a8390'),
+                'editorLineNumber.activeForeground': hex('--text-muted', isDark ? '#8b93a1' : '#5a6371'),
+                'editor.lineHighlightBackground': hex('--bg-hover', isDark ? '#23272e' : '#edeff3'),
+                'editorWidget.border': hex('--border', isDark ? '#2b3038' : '#e2e5ea'),
+            },
+        });
+        return ZITEXT_THEME;
+    } catch (error) {
+        /* Returning a builtin rather than ZITEXT_THEME matters: the definition
+           under that name is still the *previous* theme, so re-applying it would
+           leave the editor dark inside a light window — a silent failure that
+           reads as "the theme switch is broken" rather than "a colour was bad".
+           The builtin gets the light/dark polarity right at least. */
+        console.error('Failed to define the editor theme; falling back to the builtin.', error);
+        return isDark ? 'vs-dark' : 'vs';
+    }
+}
+
+// Seeded with the dark defaults; App.tsx refines this from the live tokens.
+defineEditorTheme(true, (_, fallback) => fallback);
+
 export default monaco;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -33,6 +33,7 @@ import { useEditorState } from './state/useEditorState';
 import { useProjectState } from './state/useProjectState';
 import { useAutosave } from './state/useAutosave';
 import { handleKeyDown, isMac, parseBinding, type ShortcutHandler } from './utils/shortcuts';
+import { useResolvedTheme, readToken } from './utils/theme';
 import { getLastSession, getRecentFiles } from './utils/fileOperations';
 import { formatJson, minifyJson, validateJson, sortJsonKeys } from './utils/jsonTools';
 import { formatXml, formatYaml, validateXml } from './utils/xmlYamlTools';
@@ -43,10 +44,13 @@ import {
     copySelection, cutSelection, formatDocument, pasteFromClipboard,
     redo, selectAll, toggleLineComment, undo,
 } from './utils/editorCommands';
-import monaco from './monaco-config';
+import monaco, { ZITEXT_THEME, defineEditorTheme } from './monaco-config';
 import { getModelForTab, modelUriForTab } from './utils/editorModels';
 import { fileWatcher } from './utils/fileWatcher';
 import './styles.css';
+
+/* Must stay on zitext.com: open_url_in_browser rejects any other host. */
+const RELEASE_NOTES_URL = 'https://zitext.com/changelog';
 
 interface HandlersRef {
     createNewTab: () => string;
@@ -126,23 +130,49 @@ function App() {
         settings.sidebarWidth,
     );
 
-    // Normalize legacy editorTheme value at runtime (no restart needed).
-    // 'vs-light' is not a Monaco theme name; map it to the correct built-in name
-    // based on the current app theme so syntax highlighting actually works.
-    const effectiveEditorTheme = settings.editorTheme === 'vs-light'
-        ? (settings.theme === 'dark' ? 'vs-dark' : 'vs')
-        : settings.editorTheme;
+    // 'system' never reaches CSS or Monaco — it is resolved to a concrete
+    // light/dark here, and re-resolved live while the OS setting changes.
+    const resolvedTheme = useResolvedTheme(settings.theme);
+
+    // One theme drives the whole app, and the editor uses a theme built from the
+    // same tokens as the chrome, so the two surfaces are the same colour. A
+    // stale editorTheme in settings.json (including the removed high-contrast
+    // values) is simply ignored.
+    const effectiveEditorTheme = ZITEXT_THEME;
 
     // Mirror theme to <html data-theme> so the pre-paint CSS in index.html
-    // stays in sync after settings load, and to localStorage so the next
-    // launch paints the correct theme before React mounts. Also ask the
-    // Rust side to set the native window theme on Windows (titlebar follows).
+    // stays in sync after settings load. localStorage keeps the *preference*
+    // rather than the resolved value, so a 'system' user still follows the OS
+    // on next launch. Also ask the Rust side to set the native window theme on
+    // Windows (titlebar follows).
+    // Monaco is rebuilt here too rather than in an effect of its own. Its theme
+    // is derived from the same tokens as the chrome, so it has to be rebuilt
+    // *after* data-theme flips — and reading a computed custom property forces
+    // the pending style recalculation, so the tokens below are already the new
+    // theme's. Doing both in one layout effect also means the editor and the
+    // chrome change in the same paint, with no flash of a half-switched window.
+    //
+    // This deliberately does not defer to requestAnimationFrame. The browser
+    // stops serving frames whenever the page isn't being rendered — window
+    // minimised, occluded by another window, or the tab in the background — so
+    // a deferred callback simply never ran, and the next theme change cancelled
+    // it. The chrome would switch and the editor would stay on the old theme.
+    useLayoutEffect(() => {
+        document.documentElement.setAttribute('data-theme', resolvedTheme);
+        try { localStorage.setItem('zitext_theme', settings.theme); } catch { /* private browsing */ }
+        // The native window theme is owned by useResolvedTheme — it has to be
+        // the *preference*, not the resolved value, or 'system' pins itself.
+
+        monaco.editor.setTheme(defineEditorTheme(resolvedTheme === 'dark', readToken));
+    }, [settings.theme, resolvedTheme]);
+
+    // Chrome typeface. Overrides --font-ui on <html> rather than replacing the
+    // token, so the stylesheet keeps its fallback stack if the setting is blank.
     useEffect(() => {
-        const t = settings.theme === 'light' ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', t);
-        try { localStorage.setItem('zitext_theme', t); } catch { /* private browsing */ }
-        invoke('set_window_theme', { theme: t }).catch(() => { /* ignored on platforms without window theme API */ });
-    }, [settings.theme]);
+        const root = document.documentElement;
+        if (settings.uiFont) root.style.setProperty('--font-ui', settings.uiFont);
+        else root.style.removeProperty('--font-ui');
+    }, [settings.uiFont]);
 
     // Update checker (must be called before any conditional returns / derived values)
     const { update: availableUpdate, dismiss: dismissUpdate } = useUpdateChecker(settings.checkForUpdates);
@@ -275,20 +305,36 @@ function App() {
         void loadRecentFiles();
     }, [loadRecentFiles]);
 
-    // Window title
+    // Paths of open tabs with unsaved changes, so the explorer can mark them the
+    // way the tab bar does. A Set keeps the per-row lookup O(1) — the tree
+    // re-renders on every keystroke that flips a tab's dirty flag.
+    const dirtyPaths = useMemo(
+        () => new Set(tabs.filter(t => t.isDirty && t.path).map(t => t.path as string)),
+        [tabs],
+    );
+
+    // Caption for the titlebar: "file — project", per the design.
+    const windowTitle = useMemo(() => {
+        const folder = openedFolder?.split(/[/\\]/).filter(Boolean).pop() ?? null;
+        if (!activeTab) return folder ?? 'ZITEXT Editor';
+        const fileName = activeTab.path ? activeTab.path.split(/[/\\]/).pop() : 'Untitled';
+        return folder ? `${fileName} — ${folder}` : `${fileName}`;
+    }, [activeTab, openedFolder]);
+
+    // The OS window title is the same caption the custom titlebar draws, so the
+    // three platforms read identically. Only Windows runs undecorated and paints
+    // its own bar; macOS and Linux show this one, and previously it was a
+    // different string ("file - ZITEXT Editor"), which no one noticed on Windows
+    // because the native titlebar is hidden there.
+    //
+    // The dirty marker stays: a window list is where an unsaved file is easiest
+    // to miss, and the tab bar carries its own dot regardless.
     useEffect(() => {
-        const update = async () => {
-            const appWindow = getCurrentWindow();
-            if (activeTab) {
-                const fileName = activeTab.path ? activeTab.path.split(/[/\\]/).pop() : 'Untitled';
-                const dirty = activeTab.isDirty ? '● ' : '';
-                await appWindow.setTitle(`${dirty}${fileName} - ZITEXT Editor`);
-            } else {
-                await appWindow.setTitle('ZITEXT Editor');
-            }
-        };
-        update();
-    }, [activeTab]);
+        const dirty = activeTab?.isDirty ? '● ' : '';
+        getCurrentWindow()
+            .setTitle(`${dirty}${windowTitle}`)
+            .catch(() => { /* no window title on platforms without one */ });
+    }, [windowTitle, activeTab?.isDirty]);
 
     // ─── Active pane helpers ────────────────────────────────────────────────
 
@@ -539,7 +585,9 @@ function App() {
     };
 
     const handleToggleTheme = () => {
-        const newTheme = settings.theme === 'dark' ? 'light' : 'dark';
+        // Toggling off 'system' commits to whatever it was showing, inverted —
+        // the menu item is a light/dark switch, not a tri-state cycle.
+        const newTheme = resolvedTheme === 'dark' ? 'light' : 'dark';
         updateSettings({ theme: newTheme, editorTheme: newTheme === 'dark' ? 'vs-dark' : 'vs' });
     };
 
@@ -574,6 +622,15 @@ function App() {
     const handleToggleReadOnly = () => {
         if (focusedTabId) toggleReadOnly(focusedTabId);
     };
+
+    /* Opens the changelog in the user's default browser. The backend only
+       accepts https://zitext.com URLs, so the host here is not incidental —
+       anything else is rejected rather than opened. */
+    const handleOpenReleaseNotes = useCallback(() => {
+        invoke('open_url_in_browser', { url: RELEASE_NOTES_URL }).catch((error) => {
+            errorService.showError('Failed to open the release notes', error as Error);
+        });
+    }, []);
 
     const handleOpenRecent = useCallback(async (path: string) => {
         try {
@@ -712,6 +769,8 @@ function App() {
         shortcutsRef.current = [
             { ...kb('new',           { key: 'n', ctrlOrCmd: true }),              action: createNewTab },
             { ...kb('open',          { key: 'o', ctrlOrCmd: true }),              action: openFileFromDialog },
+            // stopPropagation: Monaco reads Ctrl+K as the start of a chord.
+            { ...kb('openFolder',    { key: 'k', ctrlOrCmd: true }),              action: handleOpenFolder, stopPropagation: true },
             { ...kb('save',          { key: 's', ctrlOrCmd: true, shift: false }),  action: () => focusedTabId && handleSave(focusedTabId) },
             { ...kb('saveAs',        { key: 's', ctrlOrCmd: true, shift: true }), action: () => focusedTabId && saveFileAs(focusedTabId) },
             { ...kb('close',         { key: 'w', ctrlOrCmd: true }),              action: () => focusedTabId && handleCloseTab(focusedTabId) },
@@ -925,7 +984,7 @@ function App() {
 
     return (
         <div
-            className={`app ${settings.theme}`}
+            className="app"
             onDragOver={handleDragOver}
             onDragEnter={handleDragEnter}
             onDragLeave={handleDragLeave}
@@ -972,6 +1031,7 @@ function App() {
                     onOpenInRightPane={handleOpenInRightPane}
                     onSwapPanes={handleSwapPanes}
                     onChangeLanguage={handleChangeLanguage}
+                    currentLanguage={focusedTab?.language ?? null}
                     onCopyPath={handleCopyPath}
                     onToggleFullScreen={handleToggleFullScreen}
                     isFullscreen={isFullscreen}
@@ -985,6 +1045,7 @@ function App() {
                     splitViewEnabled={splitViewEnabled}
                     hasRightPane={rightPaneTabId !== null}
                     hasSavedPath={!!focusedTab?.path}
+                    windowTitle={windowTitle}
                     onAbout={() => setAboutModalOpen(true)}
                 />
             )}
@@ -1006,6 +1067,11 @@ function App() {
                 onReorder={reorderTabs}
                 onRename={renameFile}
                 onPinToggle={togglePinTab}
+                onToggleSplitView={handleToggleSplitView}
+                splitViewEnabled={splitViewEnabled}
+                onTogglePreview={() => focusedTabId && togglePreview(focusedTabId)}
+                isPreview={focusedTab?.isPreview || false}
+                canPreview={focusedTab !== null}
             />
 
             <div className="app-main">
@@ -1030,6 +1096,8 @@ function App() {
                             void updateSettings({ openedFolder: path, sidebarCollapsed: false });
                         }}
                         onFileSelect={handleFileSelect}
+                        activePath={focusedTab?.path ?? null}
+                        dirtyPaths={dirtyPaths}
                         onClose={handleCloseFolder}
                         collapsed={sidebarCollapsed}
                         width={sidebarWidth}
@@ -1039,7 +1107,10 @@ function App() {
 
                 <div className="app-content">
                     {focusedTab?.path && (
-                        <Breadcrumb path={focusedTab.path} />
+                        <Breadcrumb
+                            path={focusedTab.path}
+                            lineCount={focusedTab.content.split('\n').length}
+                        />
                     )}
 
                     {focusedTab && focusedTab.externallyModified && (
@@ -1100,7 +1171,7 @@ function App() {
                                     onRightFocus={() => { activePaneRef.current = 'right'; setActivePane('right'); }}
                                 />
                             ) : activeTab.isPreview ? (
-                                <MarkdownPreview content={activeTab.content} theme={settings.theme} bodyRef={previewBodyRef} />
+                                <MarkdownPreview content={activeTab.content} bodyRef={previewBodyRef} />
                             ) : (
                                 <EditorPanel
                                     modelPath={modelUriForTab(activeTab.id)}
@@ -1132,26 +1203,29 @@ function App() {
                         </div>
                     ) : null}
 
-                    {focusedTab && (
-                        <StatusBar
-                            line={focusedTab.cursorLine}
-                            column={focusedTab.cursorColumn}
-                            language={focusedTab.language}
-                            encoding={focusedTab.encoding}
-                            eol={focusedTab.eol}
-                            fileSize={focusedTab.content.length}
-                            content={focusedTab.content}
-                            selectionLength={selectionLength}
-                            fontSize={settings.fontSize}
-                            showMinimap={settings.showMinimap}
-                            onZoomIn={() => updateSettings({ fontSize: Math.min(MAX_FONT_SIZE, settings.fontSize + FONT_SIZE_STEP) })}
-                            onZoomOut={() => updateSettings({ fontSize: Math.max(MIN_FONT_SIZE, settings.fontSize - FONT_SIZE_STEP) })}
-                            onToggleMinimap={() => updateSettings({ showMinimap: !settings.showMinimap })}
-                            onChangeLanguage={() => setCommandPaletteOpen(true)}
-                        />
-                    )}
                 </div>
             </div>
+
+            {/* Outside .app-main so the bar spans the whole window, running under
+                the sidebar as well as the editor — as in the design. */}
+            {focusedTab && (
+                <StatusBar
+                    line={focusedTab.cursorLine}
+                    column={focusedTab.cursorColumn}
+                    language={focusedTab.language}
+                    encoding={focusedTab.encoding}
+                    eol={focusedTab.eol}
+                    fileSize={focusedTab.content.length}
+                    content={focusedTab.content}
+                    selectionLength={selectionLength}
+                    fontSize={settings.fontSize}
+                    showMinimap={settings.showMinimap}
+                    onZoomIn={() => updateSettings({ fontSize: Math.min(MAX_FONT_SIZE, settings.fontSize + FONT_SIZE_STEP) })}
+                    onZoomOut={() => updateSettings({ fontSize: Math.max(MIN_FONT_SIZE, settings.fontSize - FONT_SIZE_STEP) })}
+                    onToggleMinimap={() => updateSettings({ showMinimap: !settings.showMinimap })}
+                    onChangeLanguage={() => setCommandPaletteOpen(true)}
+                />
+            )}
 
             <GoToLineModal isOpen={goToLineModalOpen} onClose={() => setGoToLineModalOpen(false)} onGoToLine={handleGoToLine} maxLine={maxLine} />
             <SettingsModal isOpen={settingsModalOpen} onClose={() => setSettingsModalOpen(false)} settings={settings} onSave={updateSettings} />
@@ -1162,15 +1236,18 @@ function App() {
                 <div className="modal-overlay" onClick={handleCancelQuit}>
                     <div className="modal" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
-                            <h3>Unsaved changes</h3>
+                            <div className="modal-title-group">
+                                <span className="modal-icon-badge warning" aria-hidden="true" />
+                                <h3>Unsaved changes</h3>
+                            </div>
                         </div>
-                        <div className="modal-body">
+                        <div className="modal-body indented">
                             <p>You have unsaved changes. Do you want to save them before quitting?</p>
                         </div>
-                        <div className="modal-actions">
-                            <button className="modal-btn" onClick={handleCancelQuit}>Cancel</button>
-                            <button className="modal-btn" onClick={handleQuitWithoutSaving}>Don't Save</button>
-                            <button className="modal-btn modal-btn-primary" onClick={handleSaveAllAndQuit} autoFocus>Save All &amp; Quit</button>
+                        <div className="modal-footer">
+                            <button className="modal-button danger" onClick={handleQuitWithoutSaving}>Don't Save</button>
+                            <button className="modal-button" onClick={handleCancelQuit}>Cancel</button>
+                            <button className="modal-button primary" onClick={handleSaveAllAndQuit} autoFocus>Save All &amp; Quit</button>
                         </div>
                     </div>
                 </div>
@@ -1187,6 +1264,7 @@ function App() {
                             <p className="about-modal-copy">© {new Date().getFullYear()} Zitrino. All rights reserved.</p>
                         </div>
                         <div className="modal-actions">
+                            <button className="modal-btn" onClick={handleOpenReleaseNotes}>Release notes</button>
                             <button className="modal-btn modal-btn-primary" onClick={() => setAboutModalOpen(false)}>Close</button>
                         </div>
                     </div>
@@ -1216,7 +1294,6 @@ function App() {
                 isOpen={showDiagnostics}
                 onClose={() => setShowDiagnostics(false)}
                 tabCount={tabs.length}
-                theme={settings.theme}
             />
 
             <ToastContainer />

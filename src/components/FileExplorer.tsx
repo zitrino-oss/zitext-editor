@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import type { FileNode } from '../types';
 import { FileTreeNode } from './FileTreeNode';
 import { errorService } from '../services/ErrorService';
@@ -10,6 +11,10 @@ interface FileExplorerProps {
     folderPath: string | null;
     onFolderOpen: (path: string) => void;
     onFileSelect: (path: string) => void;
+    /** File open in the focused tab; the tree marks it selected. */
+    activePath?: string | null;
+    /** Open tabs with unsaved changes; the tree marks them with a dot. */
+    dirtyPaths?: ReadonlySet<string>;
     onClose: () => void;
     collapsed: boolean;
     width: number;
@@ -55,6 +60,8 @@ export function FileExplorer({
     folderPath,
     onFolderOpen,
     onFileSelect,
+    activePath,
+    dirtyPaths,
     onClose,
     collapsed,
     width,
@@ -65,6 +72,9 @@ export function FileExplorer({
     const [error, setError] = useState<string | null>(null);
     const [isResizing, setIsResizing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    /* Bumped by Refresh so the project file count is recounted alongside the
+       tree — files added on disk since the folder was opened are picked up. */
+    const [refreshKey, setRefreshKey] = useState(0);
 
     useEffect(() => {
         let cancelled = false;
@@ -168,6 +178,40 @@ export function FileExplorer({
         [fileTree, searchQuery]
     );
 
+    /* While a filter is active the footer describes the filter, not the project,
+       so it counts what the filtered tree holds. */
+    const matchCount = useMemo(() => {
+        const count = (nodes: FileNode[]): number => nodes.reduce(
+            (total, node) => total + (node.isDirectory ? count(node.children ?? []) : 1),
+            0,
+        );
+        return count(visibleTree);
+    }, [visibleTree]);
+
+    /* Files in the whole project, counted on the Rust side. Deliberately not
+       derived from the loaded tree: directories load their children on expand,
+       so a tree-derived figure climbed as folders were opened and described the
+       user's browsing rather than the folder. */
+    const [projectFileCount, setProjectFileCount] = useState<number | null>(null);
+
+    useEffect(() => {
+        if (!folderPath) {
+            setProjectFileCount(null);
+            return;
+        }
+        let cancelled = false;
+        setProjectFileCount(null);
+        invoke<number>('count_project_files', { path: folderPath })
+            .then((total) => { if (!cancelled) setProjectFileCount(total); })
+            .catch(() => { if (!cancelled) setProjectFileCount(null); });
+        return () => { cancelled = true; };
+    }, [folderPath, refreshKey]);
+
+    const searching = searchQuery.trim().length > 0;
+    const fileCount = searching ? matchCount : projectFileCount;
+
+    const dirtyCount = dirtyPaths?.size ?? 0;
+
     if (collapsed) return null;
 
     return (
@@ -180,7 +224,7 @@ export function FileExplorer({
                             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                         </svg>
                     </button>
-                    <button className="file-explorer-action-btn" onClick={() => folderPath && loadFileTree(folderPath, true)} title="Refresh">
+                    <button className="file-explorer-action-btn" onClick={() => { if (folderPath) { loadFileTree(folderPath, true); setRefreshKey((k) => k + 1); } }} title="Refresh">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polyline points="23 4 23 10 17 10"/>
                             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -254,12 +298,31 @@ export function FileExplorer({
                                 level={0}
                                 onClick={handleNodeClick}
                                 onExpand={handleNodeExpand}
+                                activePath={activePath}
+                                dirtyPaths={dirtyPaths}
                                 tabIndex={index === 0 ? 0 : -1}
                             />
                         ))}
                     </div>
                 )}
             </div>
+
+            {folderPath && (
+                <div className="file-explorer-footer">
+                    {/* Blank until the walk returns, rather than showing a 0 that
+                        would be read as an empty folder. */}
+                    <span>
+                        {fileCount === null
+                            ? ''
+                            : `${fileCount.toLocaleString()} ${fileCount === 1 ? 'file' : 'files'}`}
+                    </span>
+                    {dirtyCount > 0 && (
+                        <span className="file-explorer-footer-unsaved">
+                            {dirtyCount} unsaved
+                        </span>
+                    )}
+                </div>
+            )}
 
             <div className="file-explorer-resize-handle" onMouseDown={handleMouseDown} />
         </div>

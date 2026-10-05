@@ -1,9 +1,11 @@
 interface BreadcrumbProps {
     path: string | null;
     onRevealInExplorer?: () => void;
+    /** Line count of the open buffer, shown right-aligned as in the design. */
+    lineCount?: number;
 }
 
-export function Breadcrumb({ path, onRevealInExplorer }: BreadcrumbProps) {
+export function Breadcrumb({ path, onRevealInExplorer, lineCount }: BreadcrumbProps) {
     if (!path) return null;
 
     const parts = path.split(/[/\\]/);
@@ -34,6 +36,11 @@ export function Breadcrumb({ path, onRevealInExplorer }: BreadcrumbProps) {
                     </span>
                 );
             })}
+            {lineCount !== undefined && (
+                <span className="breadcrumb-lines">
+                    {lineCount.toLocaleString()} {lineCount === 1 ? 'line' : 'lines'}
+                </span>
+            )}
         </div>
     );
 }

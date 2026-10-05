@@ -383,6 +383,10 @@ struct AppSettings {
     show_minimap: bool,
     #[serde(default = "default_editor_theme")]
     editor_theme: String,
+    /// UI typeface for the app chrome — distinct from `font_family`, which is
+    /// the editor's code font. Defaults to the design's Space Grotesk.
+    #[serde(default = "default_ui_font")]
+    ui_font: String,
     #[serde(default)]
     keybindings: HashMap<String, String>,
     #[serde(default)]
@@ -414,6 +418,12 @@ struct AppSettings {
 fn default_autosave_delay() -> u32 {
     2000
 }
+/// Mirrors DEFAULT_SETTINGS.uiFont in src/state/useSettingsManager.ts — a
+/// mismatch shows as the chrome changing typeface once settings load.
+fn default_ui_font() -> String {
+    r#""Space Grotesk", system-ui, sans-serif"#.to_string()
+}
+
 fn default_editor_theme() -> String {
     "vs-dark".to_string()
 }
@@ -463,10 +473,11 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             theme: "dark".to_string(),
-            // Default to Menlo. It's an Apple-only system font, so the chain
-            // falls back to Consolas (Windows) and the bundled JetBrains Mono
-            // (Linux / guaranteed everywhere) where Menlo isn't present.
-            font_family: "\"Menlo\", \"Consolas\", \"JetBrains Mono\", monospace".to_string(),
+            // JetBrains Mono is bundled, so it resolves on every platform; the
+            // rest of the chain only matters if the webview fails to load it.
+            // Must match DEFAULT_SETTINGS.fontFamily in useSettingsManager.ts.
+            font_family: r#""JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace"#
+                .to_string(),
             font_size: 14,
             word_wrap: false,
             recent_files: Vec::new(),
@@ -475,6 +486,7 @@ impl Default for AppSettings {
             autosave_delay: 2000,
             show_minimap: false,
             editor_theme: "vs-dark".to_string(),
+            ui_font: default_ui_font(),
             keybindings: HashMap::new(),
             sort_json_keys: false,
             opened_folder: None,
@@ -2397,6 +2409,35 @@ fn search_file(
     }
 }
 
+/// Well-known large or generated directories: build output, caches, VCS data,
+/// installed dependencies. Their contents are machine-generated rather than
+/// part of the project, so both the find-in-files walk and the explorer's file
+/// count skip them — shared here so the two can't drift apart and report
+/// different ideas of what the project contains.
+fn is_generated_dir(name: &str) -> bool {
+    matches!(
+        name,
+        "node_modules"
+            | "target"
+            | "dist"
+            | "build"
+            | ".git"
+            | "__pycache__"
+            | ".venv"
+            | "vendor"
+            | ".next"
+            | ".nuxt"
+            | ".svelte-kit"
+            | ".turbo"
+            | ".angular"
+            | ".vite"
+            | ".parcel-cache"
+            | ".cache"
+            | ".output"
+            | "coverage"
+    )
+}
+
 fn search_dir_recursive(
     dir: &std::path::Path,
     options: &SearchOptions<'_>,
@@ -2440,27 +2481,7 @@ fn search_dir_recursive(
             // data, etc.). These hold machine-generated files that would otherwise flood
             // results and exhaust the match cap / visit budget before real source files
             // are reached — e.g. a Next.js `.next` folder buried product-icons.tsx entirely.
-            if matches!(
-                name,
-                "node_modules"
-                    | "target"
-                    | "dist"
-                    | "build"
-                    | ".git"
-                    | "__pycache__"
-                    | ".venv"
-                    | "vendor"
-                    | ".next"
-                    | ".nuxt"
-                    | ".svelte-kit"
-                    | ".turbo"
-                    | ".angular"
-                    | ".vite"
-                    | ".parcel-cache"
-                    | ".cache"
-                    | ".output"
-                    | "coverage"
-            ) {
+            if is_generated_dir(name) {
                 continue;
             }
             search_dir_recursive(&path, options, results, depth + 1, budget);
@@ -2468,6 +2489,61 @@ fn search_dir_recursive(
             search_file(&path, options, results, budget);
         }
     }
+}
+
+/// Upper bound on the explorer's file count. A project past this is reported as
+/// the cap rather than walked to the end, so opening a huge tree can't stall.
+const MAX_COUNTED_FILES: usize = 100_000;
+
+fn count_files_recursive(dir: &std::path::Path, depth: usize, total: &mut usize) {
+    if depth > MAX_DIRECTORY_DEPTH || *total >= MAX_COUNTED_FILES {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return; // Unreadable subtree (permissions, race) — count what we can.
+    };
+    for entry in entries.flatten() {
+        if *total >= MAX_COUNTED_FILES {
+            return;
+        }
+        let path = entry.path();
+        // Symlinks are not followed: a cycle would otherwise count forever.
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if is_generated_dir(name) {
+                continue;
+            }
+            count_files_recursive(&path, depth + 1, total);
+        } else if metadata.is_file() {
+            *total += 1;
+        }
+    }
+}
+
+/// Total files in the opened folder, for the explorer footer.
+///
+/// Counts the whole tree rather than the part the user has expanded: the figure
+/// describes the project, so it must not change as folders are opened. Skips
+/// the generated directories above, so `node_modules` doesn't turn a 200-file
+/// project into a 40,000-file one.
+#[tauri::command]
+async fn count_project_files(path: String) -> Result<usize, String> {
+    let _operation_permit = fs_operation_permit().await?;
+    let validated_path = authorize_path(&path)?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut total = 0usize;
+        count_files_recursive(&validated_path, 0, &mut total);
+        total
+    })
+    .await
+    .map_err(|e| format!("Failed to count files: {e}"))
 }
 
 #[tauri::command]
@@ -2981,6 +3057,7 @@ pub fn run() {
             append_crash_log,
             open_url_in_browser,
             set_window_theme,
+            count_project_files,
             grant_recent_path,
             confirm_app_close,
             cancel_app_close,

@@ -17,6 +17,12 @@ export const DEFAULT_KEYBINDINGS: KeybindingConfig[] = [
         defaultKey: 'Mod+O',
     },
     {
+        command: 'openFolder',
+        key: 'Mod+K',
+        label: 'Open Folder',
+        defaultKey: 'Mod+K',
+    },
+    {
         command: 'save',
         key: 'Mod+S',
         label: 'Save',

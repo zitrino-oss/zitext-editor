@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getLanguageDisplayName } from '../utils/languageDetection';
 import { calculateTextStats, formatFileSize, formatNumber } from '../utils/textStats';
+import { languageBadge } from '../utils/languageBadges';
 
 interface StatusBarProps {
     line: number;
@@ -60,6 +61,11 @@ export function StatusBar({
                     title="Select language mode"
                     onClick={onChangeLanguage}
                 >
+                    <span
+                        className="status-lang-swatch"
+                        style={{ '--lang-color': languageBadge(language)[1] } as React.CSSProperties}
+                        aria-hidden="true"
+                    />
                     {getLanguageDisplayName(language)}
                 </button>
                 <span className="status-item" title="Line Ending">
@@ -95,7 +101,7 @@ export function StatusBar({
                 </span>
                 {stats && (
                     <span className="status-item" title="Character and Word Count">
-                        {formatNumber(stats.chars)} chars &middot; {formatNumber(stats.words)} words
+                        {formatNumber(stats.chars)} ch &middot; {formatNumber(stats.words)} w
                     </span>
                 )}
                 {selectionLength !== undefined && selectionLength > 0 && (

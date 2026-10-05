@@ -1,0 +1,165 @@
+/* ============================================================================
+   Design tokens — the single source of colour, radius and elevation.
+
+   Both themes define the same names with different values; nothing downstream
+   branches on theme. `data-theme` is written to <html> by public/theme-init.js
+   before first paint and kept in sync by the settings state afterwards, so the
+   `system` setting resolves to a concrete "dark" or "light" here rather than
+   leaking prefers-color-scheme queries into component rules.
+   ============================================================================ */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #15171b;
+  /* Chrome sits on the same ground as the editor in dark mode — the borders
+     do the separating, so the window reads as one surface rather than two
+     shades. Light mode keeps its step, where a single flat white loses the
+     sidebar entirely. */
+  --bg-chrome: #15171b;
+  --bg-titlebar: #15171b;
+  --bg-hover: #23272e;
+  /* A translucent wash rather than a solid shade, for hovers that sit on more
+     than one surface. --bg-hover is a fixed colour, so the step it makes
+     depends on what is beneath it: against the settings sidebar (--bg-chrome)
+     it is a nudge, against the white content panel (--bg) nearly twice that,
+     and the same row read as two different strengths. This lifts whatever is
+     underneath by a constant amount instead. */
+  --bg-hover-soft: rgb(255 255 255 / 0.045);
+  --border: #2b3038;
+  --border-strong: #2b3038;
+  --text: #dfe3ea;
+  --text-strong: #ffffff;
+  --text-muted: #8b93a1;
+  --text-dim: #626a77;
+  --accent: #3b74f2;
+  --accent-fg: #ffffff;
+  /* Chips, buttons and secondary text that sit *on* an accent-filled surface.
+     Translucent white so the accent still reads through; identical in both
+     themes because --accent-fg is white in both. */
+  --accent-fg-soft: rgba(255, 255, 255, 0.22);
+  --accent-fg-dim: rgba(255, 255, 255, 0.7);
+  --accent-fg-fill: rgba(255, 255, 255, 0.2);
+  --accent-fg-fill-hover: rgba(255, 255, 255, 0.35);
+  --accent-fg-border: rgba(255, 255, 255, 0.4);
+  --warn: #f2a63b;
+  /* Text on an amber fill — amber is too light to carry white legibly. */
+  --warn-fg: #211a0c;
+  --warn-hover: #e0952c;
+  --danger: #f2705f;
+  /* Saturated red for the window close button, which has to read as the
+     Windows close affordance rather than as an inline error tint. */
+  --danger-strong: #e3453b;
+  --ok: #48c78e;
+
+  --shadow-menu: 0 16px 40px rgba(0, 0, 0, 0.45);
+  --shadow-dialog: 0 24px 60px rgba(0, 0, 0, 0.5);
+  /* Toasts sit above content but below dialogs. */
+  --shadow-toast: 0 10px 30px rgba(0, 0, 0, 0.35);
+  /* Resting cards (welcome screen) — far softer than a floating surface. */
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.2);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --bg-chrome: #f7f8fa;
+  --bg-titlebar: #f0f2f5;
+  --bg-hover: #edeff3;
+  /* See the dark block: a constant darkening, so the step is the same on the
+     white content panel and on the tinted sidebar. */
+  --bg-hover-soft: rgb(0 0 0 / 0.035);
+  --border: #e2e5ea;
+  --border-strong: #d6dae1;
+  --text: #191c22;
+  --text-strong: #0d1015;
+  --text-muted: #5a6371;
+  --text-dim: #7a8390;
+  --accent: #2f63e0;
+  --accent-fg: #ffffff;
+  --accent-fg-soft: rgba(255, 255, 255, 0.22);
+  --accent-fg-dim: rgba(255, 255, 255, 0.7);
+  --accent-fg-fill: rgba(255, 255, 255, 0.2);
+  --accent-fg-fill-hover: rgba(255, 255, 255, 0.35);
+  --accent-fg-border: rgba(255, 255, 255, 0.4);
+  --warn: #f2a63b;
+  --warn-fg: #211a0c;
+  --warn-hover: #e0952c;
+  --danger: #e0523f;
+  --danger-strong: #e3453b;
+  --ok: #2ea877;
+
+  /* Same geometry as dark, lighter alpha — a 0.45 shadow reads as dirt on white. */
+  --shadow-menu: 0 16px 40px rgba(0, 0, 0, 0.18);
+  --shadow-dialog: 0 24px 60px rgba(0, 0, 0, 0.22);
+  --shadow-toast: 0 10px 30px rgba(0, 0, 0, 0.12);
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+/* Theme-independent scales. Declared once on :root so they survive either
+   theme block winning. */
+:root {
+  /* Neutral grey reads correctly on either surface, so the scrollbar keeps
+     one value across themes. */
+  --scrollbar-thumb: rgba(128, 128, 128, 0.2);
+  --scrollbar-thumb-hover: rgba(128, 128, 128, 0.4);
+
+  --r-sm: 5px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-xl: 10px;
+
+  /* Every UI surface inherits --font-ui from body; --font-mono is named by the
+     rules that hold code, keycaps and numeric readouts. Changing the pair here
+     changes the whole app — no component declares a family of its own. */
+  --font-ui: 'Space Grotesk', 'Segoe UI', -apple-system, BlinkMacSystemFont,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, 'SFMono-Regular',
+    Menlo, Consolas, monospace;
+}
+
+/* --------------------------------------------------------------------------
+   Derived values. Kept here so components never mix their own alpha: a tint
+   is always "the accent at 16%", not a hand-picked hex that drifts per surface.
+   -------------------------------------------------------------------------- */
+
+:root,
+:root[data-theme="dark"] {
+  --accent-hover: #2f63e0;
+  --accent-soft: rgba(59, 116, 242, 0.16);
+  --accent-ring: rgba(59, 116, 242, 0.16);
+  --accent-text: #6f9cf5;
+  --danger-soft: rgba(242, 112, 95, 0.16);
+  --warn-soft: rgba(242, 166, 59, 0.16);
+  --ok-soft: rgba(72, 199, 142, 0.16);
+  /* Hairline inside a panel — quieter than --border. */
+  --border-subtle: #22262d;
+  /* Recessed surface for dialog footers, just under --bg-chrome. */
+  /* Must stay below --bg-chrome to read as recessed; it was lighter once the
+     chrome dropped to the editor's ground. */
+  --bg-sunken: #121418;
+  --text-disabled: #4d5560;
+  /* Find matches. --match-ruler is read as a string by Monaco's overview
+     ruler, which takes a colour value rather than a CSS variable. */
+  --match-bg: rgba(242, 166, 59, 0.28);
+  --match-current-bg: rgba(242, 166, 59, 0.45);
+  --match-ruler: #f2a63b;
+}
+
+:root[data-theme="light"] {
+  --accent-hover: #1c5cc4;
+  --accent-soft: rgba(47, 99, 224, 0.12);
+  --accent-ring: rgba(47, 99, 224, 0.18);
+  --accent-text: #1c5cc4;
+  --danger-soft: rgba(224, 82, 63, 0.12);
+  --warn-soft: rgba(242, 166, 59, 0.14);
+  --ok-soft: rgba(46, 168, 119, 0.12);
+  --border-subtle: #eceef2;
+  --bg-sunken: #f0f2f5;
+  --text-disabled: #a8b0bb;
+  --match-bg: rgba(242, 166, 59, 0.38);
+  --match-current-bg: rgba(242, 166, 59, 0.62);
+  --match-ruler: #d98a1f;
+}

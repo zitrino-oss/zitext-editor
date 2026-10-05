@@ -14,10 +14,15 @@ import {
 
 export type ToastType = 'error' | 'warning' | 'success' | 'info';
 
-interface Toast {
+export interface Toast {
     id: string;
     type: ToastType;
+    /** Headline. Kept short — it is the bold first line. */
     message: string;
+    /** Optional second line: the cause, path or figure behind the headline. */
+    detail?: string;
+    /** Renders the detail in the mono face, for machine text like error codes. */
+    detailMono?: boolean;
     duration: number;
 }
 
@@ -30,11 +35,7 @@ class ErrorService {
      * Show an error notification
      */
     showError(message: string, error?: Error, duration: number = TOAST_ERROR_DURATION_MS): void {
-        const fullMessage = error
-            ? `${message}: ${error.message}`
-            : message;
-
-        this.addToast('error', fullMessage, duration);
+        this.addToast('error', message, duration, error?.message, true);
 
         // Log to console in development
         if (import.meta.env.DEV) {
@@ -45,8 +46,8 @@ class ErrorService {
     /**
      * Show a warning notification
      */
-    showWarning(message: string, duration: number = TOAST_WARNING_DURATION_MS): void {
-        this.addToast('warning', message, duration);
+    showWarning(message: string, duration: number = TOAST_WARNING_DURATION_MS, detail?: string): void {
+        this.addToast('warning', message, duration, detail);
 
         if (import.meta.env.DEV) {
             console.warn(message);
@@ -56,15 +57,15 @@ class ErrorService {
     /**
      * Show a success notification
      */
-    showSuccess(message: string, duration: number = TOAST_SUCCESS_DURATION_MS): void {
-        this.addToast('success', message, duration);
+    showSuccess(message: string, duration: number = TOAST_SUCCESS_DURATION_MS, detail?: string): void {
+        this.addToast('success', message, duration, detail);
     }
 
     /**
      * Show an info notification
      */
-    showInfo(message: string, duration: number = TOAST_INFO_DURATION_MS): void {
-        this.addToast('info', message, duration);
+    showInfo(message: string, duration: number = TOAST_INFO_DURATION_MS, detail?: string): void {
+        this.addToast('info', message, duration, detail);
     }
 
     /**
@@ -91,9 +92,9 @@ class ErrorService {
     /**
      * Add a new toast
      */
-    private addToast(type: ToastType, message: string, duration: number): void {
+    private addToast(type: ToastType, message: string, duration: number, detail?: string, detailMono = false): void {
         const id = `toast-${++this.toastCounter}-${Date.now()}`;
-        const toast: Toast = { id, type, message, duration };
+        const toast: Toast = { id, type, message, detail, detailMono, duration };
 
         this.toasts.push(toast);
         this.notifyListeners();

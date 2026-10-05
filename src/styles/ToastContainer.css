@@ -6,21 +6,35 @@
     z-index: 10000;
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    max-width: 400px;
+    gap: 10px;
+    max-width: 380px;
 }
 
+/* Each type sets --toast-accent and --toast-tint; the tint is layered over the
+   panel background so the same rules hold up in both themes. */
 .toast {
+    position: relative;
     display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    border-left: 4px solid;
+    align-items: flex-start;
+    gap: 11px;
+    padding: 12px 13px;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--border);
+    background-color: var(--bg-chrome);
+    background-image: linear-gradient(var(--toast-tint, transparent), var(--toast-tint, transparent));
+    box-shadow: var(--shadow-toast);
+    overflow: hidden;
     animation: slideIn 0.3s ease-out;
-    min-height: 60px;
+}
+
+.toast::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--toast-accent, var(--accent));
 }
 
 @keyframes slideIn {
@@ -36,83 +50,84 @@
 }
 
 .toast-error {
-    border-left-color: #ef4444;
-    background: #fef2f2;
+    --toast-accent: var(--danger);
+    --toast-tint: var(--danger-soft);
 }
 
 .toast-warning {
-    border-left-color: #f59e0b;
-    background: #fffbeb;
+    --toast-accent: var(--warn);
+    --toast-tint: var(--warn-soft);
 }
 
 .toast-success {
-    border-left-color: #10b981;
-    background: #f0fdf4;
+    --toast-accent: var(--ok);
+    --toast-tint: var(--ok-soft);
 }
 
 .toast-info {
-    border-left-color: #3b82f6;
-    background: #eff6ff;
+    --toast-accent: var(--accent);
+    --toast-tint: var(--accent-soft);
 }
 
 .toast-icon {
-    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border-radius: var(--r-sm);
+    background: var(--toast-tint);
+    color: var(--toast-accent);
     flex-shrink: 0;
+}
+
+/* Title over optional detail — a bold headline with the cause beneath it reads
+   faster than one long concatenated sentence. */
+.toast-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 }
 
 .toast-message {
-    flex: 1;
-    font-size: 14px;
-    line-height: 1.5;
-    color: #374151;
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.45;
+    color: var(--text);
     word-break: break-word;
 }
 
+.toast-detail {
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.45;
+    color: var(--text-muted);
+    word-break: break-word;
+}
+
+/* Error codes and paths are machine text, so they go mono. */
+.toast-detail.mono {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+}
+
 .toast-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     background: none;
     border: none;
-    font-size: 18px;
-    color: #9ca3af;
+    color: var(--text-dim);
     cursor: pointer;
-    padding: 4px;
+    padding: 3px;
+    margin-top: 1px;
     flex-shrink: 0;
-    transition: color 0.2s;
+    transition: color 0.15s ease;
 }
 
 .toast-close:hover {
-    color: #374151;
-}
-
-/* Dark theme support */
-.dark .toast {
-    background: #1f2937;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-}
-
-.dark .toast-error {
-    background: #7f1d1d;
-}
-
-.dark .toast-warning {
-    background: #78350f;
-}
-
-.dark .toast-success {
-    background: #064e3b;
-}
-
-.dark .toast-info {
-    background: #1e3a8a;
-}
-
-.dark .toast-message {
-    color: #e5e7eb;
-}
-
-.dark .toast-close {
-    color: #9ca3af;
-}
-
-.dark .toast-close:hover {
-    color: #e5e7eb;
+    color: var(--text);
 }

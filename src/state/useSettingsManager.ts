@@ -3,6 +3,18 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Settings } from '../types';
 import { DEFAULT_FONT_SIZE, SIDEBAR_DEFAULT_WIDTH } from '../constants';
 import { sanitizeKeybindings } from '../utils/shortcuts';
+import { resolveTheme } from '../utils/theme';
+
+/** Font stacks that used to be the defaults. A settings file still holding
+ *  one of these has never had the font changed deliberately, so it is moved
+ *  to the new default; any other value is the user's own pick and is kept. */
+const SUPERSEDED_DEFAULTS: Record<'fontFamily' | 'uiFont', string[]> = {
+    fontFamily: [
+        '"Menlo", "Consolas", "JetBrains Mono", monospace',
+        '"IBM Plex Mono", "Cascadia Mono", Consolas, monospace',
+    ],
+    uiFont: ['"IBM Plex Sans", "Segoe UI", Arial, sans-serif'],
+};
 
 /** Default settings for the editor. Must match `AppSettings::default()` in
  *  src-tauri/src/lib.rs — a mismatch causes the chrome and editor to render
@@ -10,7 +22,8 @@ import { sanitizeKeybindings } from '../utils/shortcuts';
 const DEFAULT_SETTINGS: Settings = {
     // Appearance, recent files, and last session
     theme: 'dark',
-    fontFamily: '"Menlo", "Consolas", "JetBrains Mono", monospace',
+    fontFamily: '"JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace',
+    uiFont: '"Space Grotesk", system-ui, sans-serif',
     fontSize: DEFAULT_FONT_SIZE,
     wordWrap: false,
     recentFiles: [],
@@ -38,21 +51,16 @@ const DEFAULT_SETTINGS: Settings = {
     checkForUpdates: true,
 };
 
-/** Editor themes that pair with the dark app theme. Anything else (vs, hc-light) is light. */
-const DARK_EDITOR_THEMES = new Set(['vs-dark', 'hc-black']);
-
 /** Forces the editor (Monaco) theme to agree with the app theme: a dark app
  *  theme pairs with a dark editor theme and vice versa. Guards against a
  *  settings file whose `theme` and `editorTheme` disagree. */
 function syncEditorThemeToAppTheme(s: Settings): Settings {
-    const editorIsDark = DARK_EDITOR_THEMES.has(s.editorTheme);
-    if (s.theme === 'dark' && !editorIsDark) {
-        return { ...s, editorTheme: 'vs-dark' };
-    }
-    if (s.theme === 'light' && editorIsDark) {
-        return { ...s, editorTheme: 'vs' };
-    }
-    return s;
+    // The editor theme is no longer chosen separately — one app theme drives
+    // both. Pinning it to the exact derived value also migrates settings files
+    // left holding the removed high-contrast options.
+    // Resolve first so 'system' still picks a concrete side.
+    const editorTheme = resolveTheme(s.theme) === 'dark' ? 'vs-dark' : 'vs';
+    return s.editorTheme === editorTheme ? s : { ...s, editorTheme };
 }
 
 /**
@@ -93,6 +101,9 @@ export function useSettingsManager() {
             // render its Courier New fallback while the Settings dropdown shows blank.
             if (/Anonymous Pro|Inconsolata/.test(merged.fontFamily)) {
                 merged.fontFamily = DEFAULT_SETTINGS.fontFamily;
+            }
+            for (const key of ['fontFamily', 'uiFont'] as const) {
+                if (SUPERSEDED_DEFAULTS[key].includes(merged[key])) merged[key] = DEFAULT_SETTINGS[key];
             }
             merged.keybindings = sanitizeKeybindings(merged.keybindings);
             // Force agreement between app theme and editor theme so a stale

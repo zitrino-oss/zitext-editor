@@ -5,6 +5,7 @@ import {
     highlightPreviewMatches,
     setCurrentPreviewMatch,
 } from '../utils/previewSearch';
+import { readToken } from '../utils/theme';
 
 interface FindReplaceBarProps {
     isOpen: boolean;
@@ -186,7 +187,10 @@ export function FindReplaceBar({
                 options: {
                     className: i === idx ? 'fr-current-match' : 'fr-match',
                     overviewRuler: {
-                        color: '#facc15',
+                        // Monaco wants a colour string here, so the token is read
+                        // rather than referenced. Re-read on every search, which is
+                        // also when a theme change would need it.
+                        color: readToken('--match-ruler', '#f2a63b'),
                         position: 4 as unknown as editor.OverviewRulerLane,
                     },
                 },
@@ -356,7 +360,7 @@ export function FindReplaceBar({
                         <button className="fr-btn" onClick={() => navigate(-1)} title="Previous (Shift+Enter)">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
                         </button>
-                        <button className="fr-btn" onClick={() => navigate(1)} title="Next (Enter)">
+                        <button className="fr-btn fr-btn-default" onClick={() => navigate(1)} title="Next (Enter)">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <button className="fr-btn fr-close" onClick={handleClose} title="Close (Esc)">
@@ -379,15 +383,11 @@ export function FindReplaceBar({
                             />
                         </div>
                         <div className="fr-actions">
-                            <button className="fr-btn" onClick={handleReplace} title="Replace">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
-                                </svg>
+                            <button className="fr-btn fr-btn-text" onClick={handleReplace} title="Replace">
+                                Replace
                             </button>
-                            <button className="fr-btn" onClick={handleReplaceAll} title="Replace All">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M17 20h4"/><path d="M11.5 15H7l-2 5L3.5 15"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19"/>
-                                </svg>
+                            <button className="fr-btn fr-btn-text" onClick={handleReplaceAll} title="Replace All">
+                                All
                             </button>
                         </div>
                     </div>

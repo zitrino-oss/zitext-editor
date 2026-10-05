@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { Tab } from '../types';
 import { FileIcon } from '../utils/fileIcons';
+import { Tooltip } from './Tooltip';
 
 interface TabBarProps {
     tabs: Tab[];
@@ -12,6 +13,13 @@ interface TabBarProps {
     onReorder: (startIndex: number, endIndex: number) => void;
     onRename: (tabId: string, newName: string) => void;
     onPinToggle: (tabId: string) => void;
+    /* Right-hand affordances for two commands that already live on the View
+       menu; the tab strip is just a second, closer way to reach them. */
+    onToggleSplitView: () => void;
+    splitViewEnabled: boolean;
+    onTogglePreview: () => void;
+    isPreview: boolean;
+    canPreview: boolean;
 }
 
 interface TabItemProps {
@@ -126,7 +134,11 @@ function TabItem({
                         onClick={(e) => e.stopPropagation()}
                     />
                 ) : (
-                    tab.title
+                    /* Wrapped rather than left as a bare text node: .tab-name is a
+                       flex container, so an anonymous text child can't take
+                       text-overflow and a long name was hard-clipped mid-word
+                       ("package-lock.js") instead of showing an ellipsis. */
+                    <span className="tab-title-text">{tab.title}</span>
                 )}
             </span>
             <button
@@ -158,7 +170,10 @@ function TabItem({
     );
 }
 
-export function TabBar({ tabs, activeTabId, onTabClick, onTabClose, onNewTab, onReorder, onRename, onPinToggle }: TabBarProps) {
+export function TabBar({
+    tabs, activeTabId, onTabClick, onTabClose, onNewTab, onReorder, onRename, onPinToggle,
+    onToggleSplitView, splitViewEnabled, onTogglePreview, isPreview, canPreview,
+}: TabBarProps) {
     const tabBarRef = useRef<HTMLDivElement>(null);
     const floatRef = useRef<HTMLDivElement>(null);
     const onReorderRef = useRef(onReorder);
@@ -377,6 +392,45 @@ export function TabBar({ tabs, activeTabId, onTabClick, onTabClose, onNewTab, on
                     />
                 ))}
                 <button className="tab-new" onClick={onNewTab} title="New File (Cmd+N)">+</button>
+
+                <div className="tab-bar-actions">
+                    {/* aria-label rather than title: the buttons are icon-only, so
+                        `title` was carrying their accessible name as well as the
+                        hover hint. The Tooltip replaces only the hint.
+
+                        Both names stay fixed while the button is toggled on —
+                        aria-pressed already carries the state, and a control
+                        that renames itself on press is harder to follow. */}
+                    <Tooltip label="Split Editor">
+                        <button
+                            type="button"
+                            className={`tab-bar-action${splitViewEnabled ? ' active' : ''}`}
+                            onClick={onToggleSplitView}
+                            aria-pressed={splitViewEnabled}
+                            aria-label="Split Editor"
+                        >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                <rect x="3" y="3" width="7" height="18" rx="1" />
+                                <rect x="14" y="3" width="7" height="18" rx="1" />
+                            </svg>
+                        </button>
+                    </Tooltip>
+                    <Tooltip label="Preview Markdown">
+                        <button
+                            type="button"
+                            className={`tab-bar-action${isPreview ? ' active' : ''}`}
+                            onClick={onTogglePreview}
+                            aria-pressed={isPreview}
+                            disabled={!canPreview}
+                            aria-label="Preview Markdown"
+                        >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+                                <circle cx="12" cy="12" r="3" />
+                            </svg>
+                        </button>
+                    </Tooltip>
+                </div>
             </div>
 
             {/* Ghost tab rendered in a portal so it escapes tab-bar overflow:hidden.
@@ -394,7 +448,7 @@ export function TabBar({ tabs, activeTabId, onTabClick, onTabClose, onNewTab, on
                     </span>
                     <span className="tab-name">
                         {ghostTab.isDirty && <span className="dirty-indicator">●</span>}
-                        {ghostTab.title}
+                        <span className="tab-title-text">{ghostTab.title}</span>
                     </span>
                 </div>,
                 document.querySelector('.app') ?? document.body,

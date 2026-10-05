@@ -5,12 +5,11 @@ import 'github-markdown-css/github-markdown.css';
 
 interface MarkdownPreviewProps {
     content: string;
-    theme: 'light' | 'dark';
     /** Exposes the rendered body so Find can search the preview in place. */
     bodyRef?: React.Ref<HTMLDivElement>;
 }
 
-export function MarkdownPreview({ content, theme, bodyRef }: MarkdownPreviewProps) {
+export function MarkdownPreview({ content, bodyRef }: MarkdownPreviewProps) {
     const [html, setHtml] = useState('');
 
     useEffect(() => {
@@ -64,14 +63,16 @@ export function MarkdownPreview({ content, theme, bodyRef }: MarkdownPreviewProp
     }, [content]);
 
     return (
-        <div className={`markdown-preview-container ${theme}`}>
+        <div className="markdown-preview-container">
             <div
                 ref={bodyRef}
                 className="markdown-body"
                 dangerouslySetInnerHTML={{ __html: html }}
-                style={{
-                    color: theme === 'dark' ? '#c9d1d9' : '#24292f'
-                }}
+                /* github-markdown-css paints .markdown-body from its own
+                   prefers-color-scheme rules, which ignore the app's theme
+                   setting. Inline tokens outrank it, so the preview follows
+                   the app instead of the OS. */
+                style={{ color: 'var(--text)', backgroundColor: 'var(--bg)' }}
             />
         </div>
     );

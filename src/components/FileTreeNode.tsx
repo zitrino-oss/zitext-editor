@@ -7,10 +7,14 @@ interface FileTreeNodeProps {
     level: number;
     onClick: (node: FileNode) => void;
     onExpand: (node: FileNode) => void;
+    /** Path of the file in the focused tab, so the tree can mark it selected. */
+    activePath?: string | null;
+    /** Paths of open tabs with unsaved changes, marked with a dot as in the tab bar. */
+    dirtyPaths?: ReadonlySet<string>;
     tabIndex?: number;
 }
 
-export function FileTreeNode({ node, level, onClick, onExpand, tabIndex = -1 }: FileTreeNodeProps) {
+export function FileTreeNode({ node, level, onClick, onExpand, activePath, dirtyPaths, tabIndex = -1 }: FileTreeNodeProps) {
     const [expanded, setExpanded] = useState(node.expanded || false);
 
     useEffect(() => {
@@ -28,6 +32,8 @@ export function FileTreeNode({ node, level, onClick, onExpand, tabIndex = -1 }: 
     };
 
     const hasChildren = node.isDirectory && node.children && node.children.length > 0;
+    const isActive = !node.isDirectory && !!activePath && node.path === activePath;
+    const isDirty = !node.isDirectory && !!dirtyPaths?.has(node.path);
 
     return (
         <div className="ft-node">
@@ -35,7 +41,8 @@ export function FileTreeNode({ node, level, onClick, onExpand, tabIndex = -1 }: 
                 role="treeitem"
                 aria-expanded={node.isDirectory ? expanded : undefined}
                 tabIndex={tabIndex}
-                className={`ft-row ${node.isDirectory ? 'ft-dir' : 'ft-file'}`}
+                className={`ft-row ${node.isDirectory ? 'ft-dir' : 'ft-file'}${isActive ? ' ft-active' : ''}`}
+                aria-selected={isActive || undefined}
                 style={{ paddingLeft: `${level * 16 + 8}px` }}
                 onClick={handleClick}
                 onKeyDown={(event) => {
@@ -84,6 +91,9 @@ export function FileTreeNode({ node, level, onClick, onExpand, tabIndex = -1 }: 
 
                 {/* Name */}
                 <span className="ft-name">{node.name}</span>
+
+                {/* Unsaved changes — same marker and colour as the tab bar's. */}
+                {isDirty && <span className="ft-dirty" title="Unsaved changes" />}
             </div>
 
             {node.isDirectory && expanded && hasChildren && (
@@ -95,6 +105,8 @@ export function FileTreeNode({ node, level, onClick, onExpand, tabIndex = -1 }: 
                             level={level + 1}
                             onClick={onClick}
                             onExpand={onExpand}
+                            activePath={activePath}
+                            dirtyPaths={dirtyPaths}
                             tabIndex={-1}
                         />
                     ))}

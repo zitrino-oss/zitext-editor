@@ -1,7 +1,37 @@
 import { useEffect, useRef, useState } from 'react';
-import { getShortcutDisplay, isMac } from '../utils/shortcuts';
+import { getShortcutDisplay, isMac, isWindows } from '../utils/shortcuts';
+import { WindowControls } from './WindowControls';
 import type { Settings } from '../types';
 import { getDirectEnabledMenuItems, openKeyboardSubmenu } from './menuNavigation';
+import { languageBadge } from '../utils/languageBadges';
+
+function LanguageOption({ id, label, current, onPick }: {
+    id: string;
+    label: string;
+    current: string | null;
+    onPick: (id: string) => void;
+}) {
+    const [badge, color] = languageBadge(id);
+    const isActive = current === id;
+
+    return (
+        <div
+            className={`menu-option lang-option${isActive ? ' active' : ''}`}
+            /* Roles are assigned centrally by the effect below, so this marks
+               the selection with aria-current rather than a radio role. */
+            aria-current={isActive ? 'true' : undefined}
+            onClick={() => onPick(id)}
+        >
+            <span
+                className="lang-badge"
+                style={{ '--lang-color': color } as React.CSSProperties}
+                aria-hidden="true"
+            >{badge}</span>
+            <span>{label}</span>
+            {isActive && <span className="lang-dot" aria-hidden="true" />}
+        </div>
+    );
+}
 
 interface MenuBarProps {
     onNew: () => void;
@@ -35,6 +65,7 @@ interface MenuBarProps {
     onOpenInRightPane: () => void;
     onSwapPanes: () => void;
     onChangeLanguage: (language: string) => void;
+    currentLanguage: string | null;
     onCopyPath: () => void;
     onToggleFullScreen: () => void;
     isFullscreen: boolean;
@@ -48,6 +79,9 @@ interface MenuBarProps {
     splitViewEnabled: boolean;
     hasRightPane: boolean;
     hasSavedPath: boolean;
+    /* Shown centred in the bar where the app draws its own titlebar; elsewhere
+       the OS titlebar already says this, so it is not rendered twice. */
+    windowTitle: string;
     onAbout: () => void;
 }
 
@@ -97,6 +131,8 @@ export function MenuBar({
     hasRightPane,
     hasSavedPath,
     onAbout,
+    currentLanguage,
+    windowTitle,
 }: MenuBarProps) {
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
     const menuBarRef = useRef<HTMLDivElement>(null);
@@ -203,246 +239,272 @@ export function MenuBar({
         }
     };
 
+    /* Windows runs the window undecorated, so this bar doubles as the titlebar:
+       it owns the drag region, the document title and the window buttons.
+       macOS and Linux keep the OS titlebar above and this stays a menu bar. */
+    const customChrome = isWindows;
+    // Spread rather than a bare attribute so decorated platforms get no drag
+    // behaviour at all, instead of an inert attribute Tauri would still honour.
+    const dragRegion = customChrome ? { 'data-tauri-drag-region': true } : {};
+
     return (
-        <div
-            className="menu-bar"
-            ref={menuBarRef}
-            role="menubar"
-            aria-label="Application menu"
-            onKeyDown={handleMenuKeyDown}
-            onFocus={(event) => {
-                const submenu = (event.target as HTMLElement).closest<HTMLElement>('.menu-submenu');
-                submenu?.setAttribute('aria-expanded', 'true');
-            }}
-            onBlur={(event) => {
-                const submenu = (event.target as HTMLElement).closest<HTMLElement>('.menu-submenu');
-                if (submenu && !submenu.contains(event.relatedTarget as Node | null)) {
-                    submenu.setAttribute('aria-expanded', 'false');
-                    submenu.querySelector(':scope > .menu-dropdown-nested')?.classList.remove('keyboard-open');
-                }
-            }}
-        >
-            {/* File Menu */}
-            <div className="menu-item" onClick={() => handleMenuClick('file')}>
-                File
-                {activeMenu === 'file' && (
-                    <div className="menu-dropdown" onMouseLeave={closeMenu}>
-                        <div className="menu-option" onClick={() => { onNew(); closeMenu(); }}>
-                            New <span className="shortcut">{getShortcutDisplay('N')}</span>
-                        </div>
-                        <div className="menu-option" onClick={() => { onOpen(); closeMenu(); }}>
-                            Open File... <span className="shortcut">{getShortcutDisplay('O')}</span>
-                        </div>
-                        <div className="menu-option" onClick={() => { onOpenFolder(); closeMenu(); }}>
-                            Open Folder...
-                        </div>
-                        <div className="menu-divider" />
-                        <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onSave(); closeMenu(); } }}>
-                            Save <span className="shortcut">{getShortcutDisplay('S')}</span>
-                        </div>
-                        <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onSaveAs(); closeMenu(); } }}>
-                            Save As... <span className="shortcut">{getShortcutDisplay('S', true, true)}</span>
-                        </div>
-                        <div className={`menu-option ${!hasSavedPath ? 'disabled' : ''}`} onClick={() => { if (hasSavedPath) { onRevertFile(); closeMenu(); } }}>
-                            Revert File
-                        </div>
-                        <div className="menu-divider" />
-                        {recentFiles.length > 0 && (
-                            <>
-                                <div className="menu-submenu">
-                                    Recent Files
-                                    <div className="menu-dropdown-nested">
-                                        {recentFiles.map((file, index) => (
-                                            <div key={index} className="menu-option" onClick={() => { onOpenRecent(file); closeMenu(); }}>
-                                                {file.split(/[\\/]/).pop()}
+        <>
+            {/* Row 1 — the titlebar we draw ourselves, so the document title can
+                be centred on Windows too. Matches the redesign's 1b chrome. */}
+            {customChrome && (
+                <div className="titlebar" {...dragRegion}>
+                    <span className="titlebar-title">{windowTitle}</span>
+                    <WindowControls />
+                </div>
+            )}
+
+            {/* Row 2 — the menu bar proper. */}
+            <div className="menu-bar" {...dragRegion}>
+                <div className="menu-brand" {...dragRegion}>
+                    <span className="menu-brand-name">ZITEXT</span>
+                </div>
+                <div
+                    className="menu-items"
+                    ref={menuBarRef}
+                    role="menubar"
+                    aria-label="Application menu"
+                    onKeyDown={handleMenuKeyDown}
+                    onFocus={(event) => {
+                        const submenu = (event.target as HTMLElement).closest<HTMLElement>('.menu-submenu');
+                        submenu?.setAttribute('aria-expanded', 'true');
+                    }}
+                    onBlur={(event) => {
+                        const submenu = (event.target as HTMLElement).closest<HTMLElement>('.menu-submenu');
+                        if (submenu && !submenu.contains(event.relatedTarget as Node | null)) {
+                            submenu.setAttribute('aria-expanded', 'false');
+                            submenu.querySelector(':scope > .menu-dropdown-nested')?.classList.remove('keyboard-open');
+                        }
+                    }}
+                >
+                    {/* File Menu */}
+                    <div className="menu-item" onClick={() => handleMenuClick('file')}>
+                        File
+                        {activeMenu === 'file' && (
+                            <div className="menu-dropdown" onMouseLeave={closeMenu}>
+                                <div className="menu-option" onClick={() => { onNew(); closeMenu(); }}>
+                                    New <span className="shortcut">{getShortcutDisplay('N')}</span>
+                                </div>
+                                <div className="menu-option" onClick={() => { onOpen(); closeMenu(); }}>
+                                    Open File... <span className="shortcut">{getShortcutDisplay('O')}</span>
+                                </div>
+                                <div className="menu-option" onClick={() => { onOpenFolder(); closeMenu(); }}>
+                                    Open Folder... <span className="shortcut">{getShortcutDisplay('K')}</span>
+                                </div>
+                                <div className="menu-divider" />
+                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onSave(); closeMenu(); } }}>
+                                    Save <span className="shortcut">{getShortcutDisplay('S')}</span>
+                                </div>
+                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onSaveAs(); closeMenu(); } }}>
+                                    Save As... <span className="shortcut">{getShortcutDisplay('S', true, true)}</span>
+                                </div>
+                                <div className={`menu-option ${!hasSavedPath ? 'disabled' : ''}`} onClick={() => { if (hasSavedPath) { onRevertFile(); closeMenu(); } }}>
+                                    Revert File
+                                </div>
+                                <div className="menu-divider" />
+                                {recentFiles.length > 0 && (
+                                    <>
+                                        <div className="menu-submenu">
+                                            Recent Files
+                                            <div className="menu-dropdown-nested">
+                                                {recentFiles.map((file, index) => (
+                                                    <div key={index} className="menu-option" onClick={() => { onOpenRecent(file); closeMenu(); }}>
+                                                        {file.split(/[\\/]/).pop()}
+                                                    </div>
+                                                ))}
                                             </div>
+                                        </div>
+                                        <div className="menu-divider" />
+                                    </>
+                                )}
+                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onClose(); closeMenu(); } }}>
+                                    Close Tab <span className="shortcut">{getShortcutDisplay('W')}</span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Edit Menu */}
+                    <div className="menu-item" onClick={() => handleMenuClick('edit')}>
+                        Edit
+                        {activeMenu === 'edit' && (
+                            <div className="menu-dropdown" onMouseLeave={closeMenu}>
+                                {/* Undo…Select All mirror the macOS native menubar's PredefinedMenuItems,
+                                    which the in-app menubar (Windows/Linux) has no equivalent for.
+                                    They need a live editor, so preview mode disables them. */}
+                                <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onUndo(); closeMenu(); } }}>
+                                    Undo <span className="shortcut">{getShortcutDisplay('Z')}</span>
+                                </div>
+                                <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onRedo(); closeMenu(); } }}>
+                                    Redo <span className="shortcut">{getShortcutDisplay('Z', true, true)}</span>
+                                </div>
+                                <div className="menu-divider" />
+                                <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onCut(); closeMenu(); } }}>
+                                    Cut <span className="shortcut">{getShortcutDisplay('X')}</span>
+                                </div>
+                                <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onCopy(); closeMenu(); } }}>
+                                    Copy <span className="shortcut">{getShortcutDisplay('C')}</span>
+                                </div>
+                                <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onPaste(); closeMenu(); } }}>
+                                    Paste <span className="shortcut">{getShortcutDisplay('V')}</span>
+                                </div>
+                                <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onSelectAll(); closeMenu(); } }}>
+                                    Select All <span className="shortcut">{getShortcutDisplay('A')}</span>
+                                </div>
+                                <div className="menu-divider" />
+                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onFind(); closeMenu(); } }}>
+                                    Find... <span className="shortcut">{getShortcutDisplay('F')}</span>
+                                </div>
+                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onReplace(); closeMenu(); } }}>
+                                    Find &amp; Replace... <span className="shortcut">{getShortcutDisplay('H')}</span>
+                                </div>
+                                <div className="menu-option" onClick={() => { onFindInFiles(); closeMenu(); }}>
+                                    Find in Files... <span className="shortcut">{getShortcutDisplay('F', true, true)}</span>
+                                </div>
+                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onGoToLine(); closeMenu(); } }}>
+                                    Go to Line... <span className="shortcut">{getShortcutDisplay('G')}</span>
+                                </div>
+                                <div className="menu-divider" />
+                                <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onToggleLineComment(); closeMenu(); } }}>
+                                    Toggle Line Comment <span className="shortcut">{getShortcutDisplay('/')}</span>
+                                </div>
+                                <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onFormatDocument(); closeMenu(); } }}>
+                                    Format Document <span className="shortcut">{isMac ? '⇧⌥F' : 'Shift+Alt+F'}</span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* View Menu */}
+                    <div className="menu-item" onClick={() => handleMenuClick('view')}>
+                        View
+                        {activeMenu === 'view' && (
+                            <div className="menu-dropdown" onMouseLeave={closeMenu}>
+                                <div className="menu-option" onClick={() => { onCommandPalette(); closeMenu(); }}>
+                                    Command Palette... <span className="shortcut">{getShortcutDisplay('P', true, true)}</span>
+                                </div>
+                                <div className="menu-divider" />
+                                <div className="menu-option" onClick={() => { onToggleTheme(); closeMenu(); }}>
+                                    Toggle Theme (Dark/Light)
+                                </div>
+                                <div className="menu-divider" />
+                                <div className="menu-option" onClick={() => { onToggleWordWrap(); closeMenu(); }}>
+                                    {settings.wordWrap ? '✓ Word Wrap' : 'Word Wrap'}
+                                </div>
+                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onToggleReadOnly(); closeMenu(); } }}>
+                                    {isReadOnly ? '✓ Read-Only' : 'Read-Only'}
+                                </div>
+                                <div className="menu-divider" />
+                                <div className="menu-option" onClick={() => { onToggleExplorer(); closeMenu(); }}>
+                                    Toggle Explorer
+                                </div>
+                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onTogglePreview(); closeMenu(); } }}>
+                                    {isPreview ? '✓ Toggle Markdown Preview' : 'Toggle Markdown Preview'} <span className="shortcut">{getShortcutDisplay('V', true, true)}</span>
+                                </div>
+                                <div className="menu-option" onClick={() => { onToggleSplitView(); closeMenu(); }}>
+                                    {splitViewEnabled ? '✓ Split View' : 'Split View'} <span className="shortcut">{getShortcutDisplay('\\')}</span>
+                                </div>
+                                <div className={`menu-option ${!hasActiveTab || !splitViewEnabled ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab && splitViewEnabled) { onOpenInRightPane(); closeMenu(); } }}>
+                                    Open in Right Pane
+                                </div>
+                                <div className={`menu-option ${!hasRightPane ? 'disabled' : ''}`} onClick={() => { if (hasRightPane) { onSwapPanes(); closeMenu(); } }}>
+                                    Swap Panes
+                                </div>
+                                <div className="menu-divider" />
+                                <div className={`menu-option ${!activeTabPath ? 'disabled' : ''}`} onClick={() => { if (activeTabPath) { onCopyPath(); closeMenu(); } }}>
+                                    Copy File Path
+                                </div>
+                                {/* macOS gets an equivalent item injected by AppKit, so this is
+                                    Windows/Linux only — matching its position at the menu's end. */}
+                                <div className="menu-divider" />
+                                <div className="menu-option" onClick={() => { onToggleFullScreen(); closeMenu(); }}>
+                                    {isFullscreen ? 'Exit Full Screen' : 'Enter Full Screen'} <span className="shortcut">F11</span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Settings Menu */}
+                    <div className="menu-item" onClick={() => handleMenuClick('settings')}>
+                        Settings
+                        {activeMenu === 'settings' && (
+                            <div className="menu-dropdown" onMouseLeave={closeMenu}>
+                                <div className="menu-option" onClick={() => { onOpenSettings(); closeMenu(); }}>
+                                    Preferences... <span className="shortcut">Ctrl+,</span>
+                                </div>
+                                <div className="menu-option" onClick={() => { onOpenKeybindings(); closeMenu(); }}>
+                                    Keyboard Shortcuts...
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Language Menu */}
+                    <div className="menu-item" onClick={() => handleMenuClick('language')}>
+                        Language
+                        {activeMenu === 'language' && (
+                            <div className="menu-dropdown" onMouseLeave={closeMenu}>
+                                <div className="menu-group-label">60+ Modes</div>
+                                <div className="menu-submenu">
+                                    <span>Web and Markup</span>
+                                    <div className="menu-dropdown-nested">
+                                        {[['html','HTML'],['css','CSS'],['javascript','JavaScript'],['typescript','TypeScript'],['php','PHP'],['scss','SCSS'],['sass','Sass'],['less','Less'],['coffeescript','CoffeeScript'],['handlebars','Handlebars'],['pug','Pug'],['razor','Razor'],['twig','Twig'],['markdown','Markdown']].map(([id, label]) => (
+                                            <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
                                         ))}
                                     </div>
                                 </div>
-                                <div className="menu-divider" />
-                            </>
+                                <div className="menu-submenu">
+                                    <span>General Programming</span>
+                                    <div className="menu-dropdown-nested">
+                                        {[['python','Python'],['java','Java'],['csharp','C#'],['go','Go'],['ruby','Ruby'],['swift','Swift'],['kotlin','Kotlin'],['dart','Dart'],['elixir','Elixir'],['clojure','Clojure'],['groovy','Groovy'],['haskell','Haskell'],['julia','Julia'],['lua','Lua'],['perl','Perl'],['r','R'],['scala','Scala'],['scheme','Scheme'],['fsharp','F#']].map(([id, label]) => (
+                                            <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="menu-submenu">
+                                    <span>Systems and Engineering</span>
+                                    <div className="menu-dropdown-nested">
+                                        {[['c','C'],['cpp','C++'],['rust','Rust'],['objective-c','Objective-C'],['fortran','Fortran'],['pascal','Pascal'],['ocaml','OCaml'],['verilog','Verilog'],['vhdl','VHDL'],['solidity','Solidity']].map(([id, label]) => (
+                                            <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="menu-submenu">
+                                    <span>Data and Config</span>
+                                    <div className="menu-dropdown-nested">
+                                        {[['json','JSON'],['xml','XML'],['yaml','YAML'],['toml','TOML'],['ini','INI'],['sql','SQL'],['graphql','GraphQL'],['redis','Redis']].map(([id, label]) => (
+                                            <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="menu-submenu">
+                                    <span>Scripts and Build</span>
+                                    <div className="menu-dropdown-nested">
+                                        {[['shell','Shell'],['powershell','PowerShell'],['bat','Batch'],['dockerfile','Dockerfile'],['makefile','Makefile'],['latex','LaTeX'],['plaintext','Plain Text']].map(([id, label]) => (
+                                            <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
                         )}
-                        <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onClose(); closeMenu(); } }}>
-                            Close Tab <span className="shortcut">{getShortcutDisplay('W')}</span>
-                        </div>
                     </div>
-                )}
-            </div>
-
-            {/* Edit Menu */}
-            <div className="menu-item" onClick={() => handleMenuClick('edit')}>
-                Edit
-                {activeMenu === 'edit' && (
-                    <div className="menu-dropdown" onMouseLeave={closeMenu}>
-                        {/* Undo…Select All mirror the macOS native menubar's PredefinedMenuItems,
-                            which the in-app menubar (Windows/Linux) has no equivalent for.
-                            They need a live editor, so preview mode disables them. */}
-                        <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onUndo(); closeMenu(); } }}>
-                            Undo <span className="shortcut">{getShortcutDisplay('Z')}</span>
-                        </div>
-                        <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onRedo(); closeMenu(); } }}>
-                            Redo <span className="shortcut">{getShortcutDisplay('Z', true, true)}</span>
-                        </div>
-                        <div className="menu-divider" />
-                        <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onCut(); closeMenu(); } }}>
-                            Cut <span className="shortcut">{getShortcutDisplay('X')}</span>
-                        </div>
-                        <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onCopy(); closeMenu(); } }}>
-                            Copy <span className="shortcut">{getShortcutDisplay('C')}</span>
-                        </div>
-                        <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onPaste(); closeMenu(); } }}>
-                            Paste <span className="shortcut">{getShortcutDisplay('V')}</span>
-                        </div>
-                        <div className={`menu-option ${!canEdit ? 'disabled' : ''}`} onClick={() => { if (canEdit) { onSelectAll(); closeMenu(); } }}>
-                            Select All <span className="shortcut">{getShortcutDisplay('A')}</span>
-                        </div>
-                        <div className="menu-divider" />
-                        <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onFind(); closeMenu(); } }}>
-                            Find... <span className="shortcut">{getShortcutDisplay('F')}</span>
-                        </div>
-                        <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onReplace(); closeMenu(); } }}>
-                            Find &amp; Replace... <span className="shortcut">{getShortcutDisplay('H')}</span>
-                        </div>
-                        <div className="menu-option" onClick={() => { onFindInFiles(); closeMenu(); }}>
-                            Find in Files... <span className="shortcut">{getShortcutDisplay('F', true, true)}</span>
-                        </div>
-                        <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onGoToLine(); closeMenu(); } }}>
-                            Go to Line... <span className="shortcut">{getShortcutDisplay('G')}</span>
-                        </div>
-                        <div className="menu-divider" />
-                        <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onToggleLineComment(); closeMenu(); } }}>
-                            Toggle Line Comment <span className="shortcut">{getShortcutDisplay('/')}</span>
-                        </div>
-                        <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onFormatDocument(); closeMenu(); } }}>
-                            Format Document <span className="shortcut">{isMac ? '⇧⌥F' : 'Shift+Alt+F'}</span>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* View Menu */}
-            <div className="menu-item" onClick={() => handleMenuClick('view')}>
-                View
-                {activeMenu === 'view' && (
-                    <div className="menu-dropdown" onMouseLeave={closeMenu}>
-                        <div className="menu-option" onClick={() => { onCommandPalette(); closeMenu(); }}>
-                            Command Palette... <span className="shortcut">{getShortcutDisplay('P', true, true)}</span>
-                        </div>
-                        <div className="menu-divider" />
-                        <div className="menu-option" onClick={() => { onToggleTheme(); closeMenu(); }}>
-                            Toggle Theme (Dark/Light)
-                        </div>
-                        <div className="menu-divider" />
-                        <div className="menu-option" onClick={() => { onToggleWordWrap(); closeMenu(); }}>
-                            {settings.wordWrap ? '✓ Word Wrap' : 'Word Wrap'}
-                        </div>
-                        <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onToggleReadOnly(); closeMenu(); } }}>
-                            {isReadOnly ? '✓ Read-Only' : 'Read-Only'}
-                        </div>
-                        <div className="menu-divider" />
-                        <div className="menu-option" onClick={() => { onToggleExplorer(); closeMenu(); }}>
-                            Toggle Explorer
-                        </div>
-                        <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onTogglePreview(); closeMenu(); } }}>
-                            {isPreview ? '✓ Toggle Markdown Preview' : 'Toggle Markdown Preview'} <span className="shortcut">{getShortcutDisplay('V', true, true)}</span>
-                        </div>
-                        <div className="menu-option" onClick={() => { onToggleSplitView(); closeMenu(); }}>
-                            {splitViewEnabled ? '✓ Split View' : 'Split View'} <span className="shortcut">{getShortcutDisplay('\\')}</span>
-                        </div>
-                        <div className={`menu-option ${!hasActiveTab || !splitViewEnabled ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab && splitViewEnabled) { onOpenInRightPane(); closeMenu(); } }}>
-                            Open in Right Pane
-                        </div>
-                        <div className={`menu-option ${!hasRightPane ? 'disabled' : ''}`} onClick={() => { if (hasRightPane) { onSwapPanes(); closeMenu(); } }}>
-                            Swap Panes
-                        </div>
-                        <div className="menu-divider" />
-                        <div className={`menu-option ${!activeTabPath ? 'disabled' : ''}`} onClick={() => { if (activeTabPath) { onCopyPath(); closeMenu(); } }}>
-                            Copy File Path
-                        </div>
-                        {/* macOS gets an equivalent item injected by AppKit, so this is
-                            Windows/Linux only — matching its position at the menu's end. */}
-                        <div className="menu-divider" />
-                        <div className="menu-option" onClick={() => { onToggleFullScreen(); closeMenu(); }}>
-                            {isFullscreen ? 'Exit Full Screen' : 'Enter Full Screen'} <span className="shortcut">F11</span>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Settings Menu */}
-            <div className="menu-item" onClick={() => handleMenuClick('settings')}>
-                Settings
-                {activeMenu === 'settings' && (
-                    <div className="menu-dropdown" onMouseLeave={closeMenu}>
-                        <div className="menu-option" onClick={() => { onOpenSettings(); closeMenu(); }}>
-                            Preferences... <span className="shortcut">Ctrl+,</span>
-                        </div>
-                        <div className="menu-option" onClick={() => { onOpenKeybindings(); closeMenu(); }}>
-                            Keyboard Shortcuts...
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Language Menu */}
-            <div className="menu-item" onClick={() => handleMenuClick('language')}>
-                Language
-                {activeMenu === 'language' && (
-                    <div className="menu-dropdown" onMouseLeave={closeMenu}>
-                        <div className="menu-submenu">
-                            <span>Web and Markup</span>
-                            <div className="menu-dropdown-nested">
-                                {[['html','HTML'],['css','CSS'],['javascript','JavaScript'],['typescript','TypeScript'],['php','PHP'],['scss','SCSS'],['sass','Sass'],['less','Less'],['coffeescript','CoffeeScript'],['handlebars','Handlebars'],['pug','Pug'],['razor','Razor'],['twig','Twig'],['markdown','Markdown']].map(([id, label]) => (
-                                    <div key={id} className="menu-option" onClick={() => { onChangeLanguage(id); closeMenu(); }}>{label}</div>
-                                ))}
+                    {/* Help Menu */}
+                    <div className="menu-item" onClick={() => handleMenuClick('help')}>
+                        Help
+                        {activeMenu === 'help' && (
+                            <div className="menu-dropdown" onMouseLeave={closeMenu}>
+                                <div className="menu-option" onClick={() => { onAbout(); closeMenu(); }}>
+                                    About ZITEXT Editor
+                                </div>
                             </div>
-                        </div>
-                        <div className="menu-submenu">
-                            <span>General Programming</span>
-                            <div className="menu-dropdown-nested">
-                                {[['python','Python'],['java','Java'],['csharp','C#'],['go','Go'],['ruby','Ruby'],['swift','Swift'],['kotlin','Kotlin'],['dart','Dart'],['elixir','Elixir'],['clojure','Clojure'],['groovy','Groovy'],['haskell','Haskell'],['julia','Julia'],['lua','Lua'],['perl','Perl'],['r','R'],['scala','Scala'],['scheme','Scheme'],['fsharp','F#']].map(([id, label]) => (
-                                    <div key={id} className="menu-option" onClick={() => { onChangeLanguage(id); closeMenu(); }}>{label}</div>
-                                ))}
-                            </div>
-                        </div>
-                        <div className="menu-submenu">
-                            <span>Systems and Engineering</span>
-                            <div className="menu-dropdown-nested">
-                                {[['c','C'],['cpp','C++'],['rust','Rust'],['objective-c','Objective-C'],['fortran','Fortran'],['pascal','Pascal'],['ocaml','OCaml'],['verilog','Verilog'],['vhdl','VHDL'],['solidity','Solidity']].map(([id, label]) => (
-                                    <div key={id} className="menu-option" onClick={() => { onChangeLanguage(id); closeMenu(); }}>{label}</div>
-                                ))}
-                            </div>
-                        </div>
-                        <div className="menu-submenu">
-                            <span>Data and Config</span>
-                            <div className="menu-dropdown-nested">
-                                {[['json','JSON'],['xml','XML'],['yaml','YAML'],['toml','TOML'],['ini','INI'],['sql','SQL'],['graphql','GraphQL'],['redis','Redis']].map(([id, label]) => (
-                                    <div key={id} className="menu-option" onClick={() => { onChangeLanguage(id); closeMenu(); }}>{label}</div>
-                                ))}
-                            </div>
-                        </div>
-                        <div className="menu-submenu">
-                            <span>Scripts and Build</span>
-                            <div className="menu-dropdown-nested">
-                                {[['shell','Shell'],['powershell','PowerShell'],['bat','Batch'],['dockerfile','Dockerfile'],['makefile','Makefile'],['latex','LaTeX'],['plaintext','Plain Text']].map(([id, label]) => (
-                                    <div key={id} className="menu-option" onClick={() => { onChangeLanguage(id); closeMenu(); }}>{label}</div>
-                                ))}
-                            </div>
-                        </div>
+                        )}
                     </div>
-                )}
+                </div>
             </div>
-            {/* Help Menu */}
-            <div className="menu-item" onClick={() => handleMenuClick('help')}>
-                Help
-                {activeMenu === 'help' && (
-                    <div className="menu-dropdown" onMouseLeave={closeMenu}>
-                        <div className="menu-option" onClick={() => { onAbout(); closeMenu(); }}>
-                            About ZITEXT Editor
-                        </div>
-                    </div>
-                )}
-            </div>
-        </div>
+        </>
     );
 }
