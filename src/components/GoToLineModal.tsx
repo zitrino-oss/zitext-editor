@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { parseLineAndColumn } from '../utils/lineColumn';
 import { errorService } from '../services/ErrorService';
 
 interface GoToLineModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onGoToLine: (lineNumber: number) => void;
+    onGoToLine: (lineNumber: number, column: number) => void;
     maxLine: number;
 }
 
@@ -23,10 +24,10 @@ export function GoToLineModal({ isOpen, onClose, onGoToLine, maxLine }: GoToLine
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const num = parseInt(lineNumber);
+        const target = parseLineAndColumn(lineNumber);
         const effectiveMax = Math.max(maxLine, 1); // treat empty file as 1 line
-        if (!isNaN(num) && num > 0 && num <= effectiveMax) {
-            onGoToLine(num);
+        if (target && target.line > 0 && target.line <= effectiveMax) {
+            onGoToLine(target.line, target.column);
             onClose();
         } else {
             errorService.showWarning(`Please enter a line number between 1 and ${effectiveMax}`);
@@ -44,7 +45,7 @@ export function GoToLineModal({ isOpen, onClose, onGoToLine, maxLine }: GoToLine
             <div className="modal" onClick={(e) => e.stopPropagation()} onKeyDown={handleKeyDown}>
                 <div className="modal-header">
                     <h3>Go to Line</h3>
-                    <button className="modal-close" onClick={onClose}>×</button>
+                    <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
                 </div>
                 {/* noValidate: rely on handleSubmit's JS range check + in-app warning
                     toast instead of native HTML5 constraint validation. WebKitGTK
@@ -60,9 +61,9 @@ export function GoToLineModal({ isOpen, onClose, onGoToLine, maxLine }: GoToLine
                                 type="text"
                                 inputMode="numeric"
                                 className="modal-input modal-input-bare"
-                                aria-label={`Line number, 1 to ${Math.max(maxLine, 1)}`}
+                                aria-label={`Line number, 1 to ${Math.max(maxLine, 1)}, optionally followed by :column`}
                                 value={lineNumber}
-                                onChange={(e) => setLineNumber(e.target.value.replace(/[^0-9]/g, ''))}
+                                onChange={(e) => setLineNumber(e.target.value.replace(/[^0-9:,]/g, ''))}
                             />
                             <span className="modal-input-hint" aria-hidden="true">
                                 1 – {Math.max(maxLine, 1).toLocaleString()}

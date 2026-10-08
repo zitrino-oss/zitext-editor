@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { Settings } from '../types';
+import { FONT_FAMILIES, UI_FONTS } from '../utils/fontOptions';
+import { MAX_FONT_SIZE, MIN_FONT_SIZE } from '../constants';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -7,32 +9,6 @@ interface SettingsModalProps {
     settings: Settings;
     onSave: (settings: Partial<Settings>) => void;
 }
-
-/* Chrome typefaces, all bundled in public/fonts.css. Space Grotesk is the
-   default; the earlier defaults stay selectable rather than being dropped. */
-const UI_FONTS = [
-    { value: '"Space Grotesk", system-ui, sans-serif', label: 'Space Grotesk' },
-    { value: '"Geist", system-ui, sans-serif', label: 'Geist Sans' },
-    { value: '"IBM Plex Sans", "Segoe UI", Arial, sans-serif', label: 'IBM Plex Sans' },
-    { value: '"Inter", system-ui, sans-serif', label: 'Inter' },
-    { value: 'system-ui, sans-serif', label: 'System UI' },
-];
-
-const FONT_FAMILIES = [
-    { value: '"IBM Plex Mono", "Cascadia Mono", Consolas, monospace', label: 'IBM Plex Mono' },
-    { value: '"Consolas", "Courier New", monospace', label: 'Consolas' },
-    { value: '"Courier New", Courier, monospace', label: 'Courier New' },
-    { value: '"Menlo", "Consolas", "JetBrains Mono", monospace', label: 'Menlo' },
-    { value: '"Monaco", "Menlo", "Courier New", monospace', label: 'Monaco' },
-    { value: '"JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace', label: 'JetBrains Mono' },
-    { value: '"Fira Code", "Menlo", "Monaco", "Consolas", monospace', label: 'Fira Code' },
-    { value: '"Source Code Pro", "Menlo", "Monaco", "Consolas", monospace', label: 'Source Code Pro' },
-    { value: '"Ubuntu Mono", "Courier New", Courier, monospace', label: 'Ubuntu Mono' },
-    { value: '"Roboto Mono", "Courier New", Courier, monospace', label: 'Roboto Mono' },
-    { value: '"Space Mono", "Courier New", Courier, monospace', label: 'Space Mono' },
-    { value: '"Courier Prime", "Courier New", Courier, monospace', label: 'Courier Prime' },
-    { value: 'monospace', label: 'System Monospace' },
-];
 
 type SettingsTab = 'editor' | 'files' | 'privacy' | 'advanced';
 
@@ -218,20 +194,29 @@ function SelectRow({ label, hint, value, onChange, options }: {
     );
 }
 
-function NumberRow({ label, value, onChange, min, max, step }: {
+export function NumberRow({ label, value, onChange, min, max, step }: {
     label: string; value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number;
 }) {
+    // Typing keeps the raw text; the value is clamped when the field is left
+    // or Enter is pressed. Clamping each keystroke turned "1500" into 10000.
+    const [draft, setDraft] = useState(String(value));
+    useEffect(() => { setDraft(String(value)); }, [value]);
+    const commit = () => {
+        const v = parseInt(draft);
+        const clamped = isNaN(v) ? value : Math.max(min ?? 0, Math.min(max ?? 999, v));
+        setDraft(String(clamped));
+        if (clamped !== value) onChange(clamped);
+    };
     return (
         <div className="s-row">
             <span className="s-row-label">{label}</span>
             <input
                 type="number"
                 className="s-number"
-                value={value}
-                onChange={(e) => {
-                    const v = parseInt(e.target.value);
-                    if (!isNaN(v)) onChange(Math.max(min ?? 0, Math.min(max ?? 999, v)));
-                }}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={commit}
+                onKeyDown={(e) => { if (e.key === 'Enter') commit(); }}
                 min={min} max={max} step={step}
             />
         </div>
@@ -385,7 +370,7 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
                                 <SelectRow label="UI font" hint="Space Grotesk is the ZITEXT default"
                                     value={uiFont} onChange={setUiFont} options={UI_FONTS} />
                                 <SelectRow label="Code font" value={fontFamily} onChange={setFontFamily} options={FONT_FAMILIES} />
-                                <SliderRow label="Font size" value={fontSize} onChange={setFontSize} min={8} max={32} />
+                                <SliderRow label="Font size" value={fontSize} onChange={setFontSize} min={MIN_FONT_SIZE} max={MAX_FONT_SIZE} />
 
                                 <SectionHeader title="Indentation" />
                                 <SelectRow label="Tab Size" value={tabSize} onChange={(v) => setTabSize(parseInt(v))}
@@ -407,7 +392,7 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
                                 {autosave === 'afterDelay' && (
                                     <NumberRow label="Delay (ms)" value={autosaveDelay} onChange={setAutosaveDelay} min={500} max={10000} step={500} />
                                 )}
-                                <Toggle label="Format on Save" description="Auto-format JSON/XML when saving" checked={formatOnSave} onChange={setFormatOnSave} />
+                                <Toggle label="Format on Save" description="Format JSON, XML, YAML, HTML, CSS, JavaScript and TypeScript files when saving (not read-only or new, unsaved documents)" checked={formatOnSave} onChange={setFormatOnSave} />
 
                                 <SectionHeader title="Defaults" />
                                 <InfoBlock>

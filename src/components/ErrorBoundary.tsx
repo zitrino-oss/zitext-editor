@@ -1,4 +1,7 @@
 import React, { Component, ReactNode } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { errorService } from '../services/ErrorService';
 import '../styles/ErrorBoundary.css';
 
@@ -18,6 +21,9 @@ interface State {
  * Provides a fallback UI when errors occur and logs errors for debugging.
  */
 export class ErrorBoundary extends Component<Props, State> {
+    private closeUnlisten: UnlistenFn | null = null;
+    private closeListenerPending = false;
+
     constructor(props: Props) {
         super(props);
         this.state = {
@@ -48,6 +54,42 @@ export class ErrorBoundary extends Component<Props, State> {
         );
 
         // Hook point for forwarding errors to an external tracking service.
+    }
+
+    /**
+     * While this screen replaces the app, App's own close-request listener is
+     * gone, but the backend still holds every close until the renderer answers.
+     * Answer it here so the window can always be closed, keeping the last
+     * crash-recovery snapshot (the only copy of the unsaved work that was open).
+     */
+    private ensureCloseHandling(): void {
+        if (this.closeUnlisten || this.closeListenerPending) return;
+        this.closeListenerPending = true;
+        listen<string>('close-requested', event => {
+            void invoke('acknowledge_close_request', { token: event.payload }).catch(() => {});
+            invoke('confirm_app_close', { token: event.payload, keepSession: true })
+                .catch(() => { /* window already closing */ });
+        })
+            .then(unlisten => {
+                this.closeListenerPending = false;
+                if (this.state.hasError) this.closeUnlisten = unlisten;
+                else unlisten();
+            })
+            .catch(() => { this.closeListenerPending = false; /* not running in Tauri */ });
+    }
+
+    private releaseCloseHandling(): void {
+        this.closeUnlisten?.();
+        this.closeUnlisten = null;
+    }
+
+    componentDidUpdate(): void {
+        if (this.state.hasError) this.ensureCloseHandling();
+        else this.releaseCloseHandling();
+    }
+
+    componentWillUnmount(): void {
+        this.releaseCloseHandling();
     }
 
     handleReset = (): void => {
@@ -91,6 +133,14 @@ export class ErrorBoundary extends Component<Props, State> {
                                 onClick={() => window.location.reload()}
                             >
                                 Reload Page
+                            </button>
+                            {/* Windows has no native window controls here; the
+                                close request keeps the crash-recovery snapshot. */}
+                            <button
+                                className="error-boundary-btn error-boundary-btn-secondary"
+                                onClick={() => { void getCurrentWindow().close().catch(() => {}); }}
+                            >
+                                Close ZITEXT
                             </button>
                         </div>
                     </div>

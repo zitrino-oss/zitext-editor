@@ -9,33 +9,39 @@ React, TypeScript, and the Monaco Editor. Simple, fast, and feature-rich.
 - New file, Open file, Save, Save As, Close tab
 - Unsaved-changes confirmation
 - Autosave (after delay or on focus change)
-- Recent files and full session restore
+- Recent files
+- **Large File and Log viewer** (**File → Open Large File or Log…**): opens files of any size read-only without loading them whole; follows a growing log (with rotation detection), filters lines in or out by text or regular expression, highlights log levels, HTTP status codes, request IDs and your own keywords, goes to a line, a percentage or a time, bookmarks lines, and exports filtered, highlighted, selected or bookmarked lines to a new file. Files over the editor's 10 MB limit are offered here automatically.
+- **Scratchpad** (**Tools → Open Scratchpad**, `Cmd/Ctrl+Shift+N`): a note with no file name and no Save dialog; it saves itself as you type and is there on the next launch
+- Crash recovery: after a crash or forced quit, ZITEXT offers to reopen your files and unsaved changes (a normal quit starts with a fresh window)
 
 ### Editing
 - Multiple tabs
 - Split view (side-by-side editing, `Ctrl/Cmd+\`)
-- Syntax highlighting for 60+ language modes; common extensions are auto-detected
+- Syntax highlighting for 80+ language modes; common file names and extensions are auto-detected
 - Multi-cursor editing
-- Column (rectangular) selection (Alt+Shift+Drag, or middle mouse button)
+- Column (rectangular) selection (Alt+Shift+Drag once **Column Selection** is turned on in Settings, or middle mouse button)
 - Find in file, Find in files, and Go to line
+- **Marks** (**Tools → Mark Selection**, `Cmd/Ctrl+Shift+M`, or **Mark** in the Find bar): keep every occurrence of a word, phrase or regular expression highlighted in one of six colours as you edit; step through them with `F4` / `Shift+F4`
+- **File Compare** (**File → Compare**): compare the current document with another file, another open tab, the clipboard, or its saved version on disk, side by side or inline, with changed characters marked; step through changes, copy them from one side to the other, and ignore whitespace, case or blank lines
 - Word wrap, read-only mode, current-line highlighting, minimap
 
 ### Data tools
 - JSON: format, minify, validate, sort keys
-- XML: format and validate
+- XML: format, minify and validate
 - YAML: format
 - Markdown preview
+- **Text and Data Tools** (**Tools** menu or the command palette): sort lines (A–Z, Z–A, numerically), remove duplicate or empty lines, trim, reverse, join, split and count unique lines; upper, lower and title case; URL, Base64, HTML and JSON encode/decode; decode a JWT (locally, signature not checked); insert a UUID; SHA-256 and MD5 checksums; Unix timestamp ↔ date; CSV ↔ JSON, TSV ↔ JSON and CSV ↔ TSV. Tools work on the selection, or the whole document when nothing is selected; conversions open in a new tab
 
 ### Appearance
 - Light/dark themes that follow the OS theme on first launch
 - Font family, font size, and zoom controls
 
 ### Status bar
-- Line/column, language mode, encoding, and line-ending type (LF/CRLF)
+- Line/column, language mode, encoding, and line-ending type (LF, CRLF, or Mixed)
 
 ## Prerequisites
 
-- **Node.js** 22 LTS (see `.nvmrc`)
+- **Node.js** 22.22.2 or a later 22.x release (see `.nvmrc`; locked dev dependencies such as jsdom need it)
 - **Rust** 1.93.0 (installed automatically from `rust-toolchain.toml`)
 - **Tauri prerequisites** for your platform — https://tauri.app/start/prerequisites/
   - macOS: Xcode Command Line Tools (`xcode-select --install`)
@@ -67,7 +73,9 @@ Bundles are written to:
 
 ## Command-line wrapper
 
-The packaged macOS/Linux wrapper accepts existing files and folders:
+The macOS/Linux wrapper is `scripts/zitext`. The app packages don't install it
+yet; copy it to a folder on your `PATH` to use it. It accepts files and folders,
+with absolute or relative paths:
 
 ```bash
 zitext path/to/file.txt
@@ -88,23 +96,29 @@ ignored.
 | Open file | `Cmd/Ctrl+O` |
 | Save / Save As | `Cmd/Ctrl+S` / `Cmd/Ctrl+Shift+S` |
 | Close tab | `Cmd/Ctrl+W` |
-| Find / Replace | `Cmd/Ctrl+F` / `Cmd/Ctrl+H` |
+| Find / Replace | `Cmd/Ctrl+F` / `Ctrl+H` (`Cmd+Option+F` on macOS) |
 | Find in files | `Cmd/Ctrl+Shift+F` |
 | Go to line | `Cmd/Ctrl+G` |
 | Command palette | `Cmd/Ctrl+Shift+P` |
 | Toggle split view | `Cmd/Ctrl+\` |
 | Markdown preview | `Cmd/Ctrl+Shift+V` |
-| Increase / decrease font size | `Cmd/Ctrl++` / `Cmd/Ctrl+-` |
+| Increase / decrease font size | `Cmd/Ctrl+=` (or `+`) / `Cmd/Ctrl+-` |
+| Compare: next / previous change | `Alt+F5` / `Shift+Alt+F5` |
+| Log viewer: next / previous bookmark, add bookmark | `F2` / `Shift+F2`, `Cmd/Ctrl+F2` |
+| Open Scratchpad | `Cmd/Ctrl+Shift+N` |
+| Mark selection / next / previous marked | `Cmd/Ctrl+Shift+M` / `F4` / `Shift+F4` |
 
 Shortcuts are customizable from **Settings → Keyboard Shortcuts**.
 
 ## Supported languages
 
 Common file extensions are detected automatically, and additional modes can be
-selected from the language menu. The 60+ available modes include JavaScript,
-TypeScript, HTML, CSS/SCSS/Sass/Less,
+selected from the language menu. The 80+ available modes include JavaScript,
+TypeScript, HTML, CSS/SCSS/Less,
 JSON, XML, YAML, TOML, Python, Java, C/C++, C#, Go, Rust, Ruby, PHP, Swift,
-Kotlin, Scala, shell scripts, PowerShell, SQL, Markdown, LaTeX, and more.
+Kotlin, Scala, shell scripts, PowerShell, SQL (including MySQL and PostgreSQL),
+Markdown, MDX, Dockerfile, Makefile, Terraform, Protocol Buffers, SystemVerilog,
+Visual Basic, and more.
 
 ## Configuration
 

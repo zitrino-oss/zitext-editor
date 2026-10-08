@@ -1,5 +1,3 @@
-import { useEffect } from 'react';
-
 interface UnsavedChangesModalProps {
     isOpen: boolean;
     fileName: string;
@@ -15,19 +13,8 @@ export function UnsavedChangesModal({
     onDontSave,
     onCancel
 }: UnsavedChangesModalProps) {
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (!isOpen) return;
-
-            if (e.key === 'Escape') {
-                onCancel();
-            }
-        };
-
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, onCancel]);
-
+    // Escape is handled centrally (DialogFocusManager): it cancels, like a
+    // click outside the dialog.
     if (!isOpen) return null;
 
     return (
@@ -38,7 +25,7 @@ export function UnsavedChangesModal({
                         <span className="modal-icon-badge warning" aria-hidden="true" />
                         <h3>Unsaved Changes</h3>
                     </div>
-                    <button className="modal-close" onClick={onCancel}>×</button>
+                    <button className="modal-close" onClick={onCancel} aria-label="Close">×</button>
                 </div>
                 <div className="modal-body indented">
                     <p>

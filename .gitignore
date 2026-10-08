@@ -32,3 +32,8 @@ dist-ssr
 *.tsbuildinfo
 /vite.config.js
 /vite.config.d.ts
+
+# Internal review reports, fix trackers and planning notes (kept out of the
+# public repo)
+/ZITEXT_*.md
+/ZiText_*.md

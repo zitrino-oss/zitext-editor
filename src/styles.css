@@ -1869,11 +1869,6 @@ body {
 .breadcrumb-item-active {
   color: var(--text);
   font-weight: 500;
-  cursor: pointer;
-}
-
-.breadcrumb-item-active:hover {
-  color: var(--accent);
 }
 
 /* Line count, pushed to the far end of the row. Mono + tabular so it does not
@@ -1975,6 +1970,19 @@ body {
   font-size: 13px;
   color: var(--text-muted);
   text-align: center;
+}
+
+.ft-row.ft-note {
+  cursor: default;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.find-in-files-notes {
+  padding: 4px 12px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 .find-in-files-empty {
@@ -2339,7 +2347,7 @@ body {
   width: 640px;
   max-width: 92vw;
   /* Auto height so every tab shows all its rows without scrolling
-     (QA: fixed 520px clipped the Editor tab). min-height keeps the short
+     (a fixed 520px height clipped the Editor tab). min-height keeps the short
      tabs from collapsing; max-height still guards tiny windows, where
      .s-content-scroll's overflow-y takes over. */
   height: auto;
@@ -3770,3 +3778,281 @@ body {
   from { opacity: 0; transform: translateX(-50%) translateY(-2px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+
+/* ─── Large File / Log viewer and File Compare ──────────────────────────── */
+
+.workspace-view {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.tab.tab-view .tab-icon { color: var(--accent); }
+
+.menu-submenu.disabled { color: var(--text-disabled); pointer-events: none; }
+
+.log-viewer, .compare-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.log-viewer-error { padding: 24px; font-family: var(--font-ui); }
+
+.log-toolbar, .compare-toolbar, .log-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-chrome);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.log-filterbar { gap: 6px; }
+
+.log-toolbar-group { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+.log-input, .log-select {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  min-width: 0;
+}
+.log-input { width: 180px; }
+.log-input-narrow { width: 170px; }
+.log-input:focus, .log-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
+
+.log-button, .log-toggle {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.log-button:hover:not(:disabled), .log-toggle:hover:not(:disabled) { background: var(--bg-hover); }
+.log-button:disabled, .log-toggle:disabled { color: var(--text-disabled); cursor: default; }
+.log-toggle.active, .log-button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.log-button:focus-visible, .log-toggle:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+
+.log-check { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+
+.log-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 4px 0 8px;
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+}
+.log-chip.exclude { background: var(--danger-soft); color: var(--danger); }
+
+.log-chip-remove {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+}
+.log-chip-remove:hover { background: var(--bg-hover); }
+
+.log-menu-anchor { position: relative; }
+.log-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 240px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  box-shadow: var(--shadow-menu);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.log-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.log-menu-item:hover:not(:disabled) { background: var(--bg-hover); }
+.log-menu-item:disabled { color: var(--text-disabled); cursor: default; }
+.log-menu-label { flex: 1; }
+.log-menu-add { display: flex; gap: 4px; padding: 6px 2px 2px; border-top: 1px solid var(--border-subtle); margin-top: 4px; }
+.log-menu-add .log-input { flex: 1; width: auto; }
+.log-swatch { width: 10px; height: 10px; border-radius: 2px; }
+
+.log-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--warn-soft);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.log-body-wrap { flex: 1; display: flex; min-height: 0; }
+
+.log-body {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  outline: none;
+  user-select: text;
+  white-space: pre;
+}
+.log-body:focus-visible { box-shadow: inset 0 0 0 1px var(--accent-ring); }
+
+.log-row { display: flex; min-width: max-content; cursor: default; border-left: 3px solid transparent; }
+.log-row.selected { background: var(--accent-soft); }
+.log-row.sev-error { border-left-color: var(--danger); }
+.log-row.sev-warn { border-left-color: var(--warn); }
+.log-row.sev-info { border-left-color: var(--accent); }
+.log-row.sev-debug { border-left-color: var(--border-strong); }
+
+.log-gutter {
+  flex: none;
+  position: sticky;
+  left: 0;
+  padding-right: 1ch;
+  text-align: right;
+  color: var(--text-dim);
+  background: var(--bg);
+  cursor: pointer;
+  user-select: none;
+}
+.log-row.selected .log-gutter { background: inherit; }
+.log-gutter:hover { color: var(--text); }
+.log-gutter.bookmarked { color: var(--accent-fg); background: var(--accent); }
+
+.log-text { padding-left: 1ch; padding-right: 2ch; }
+.log-loading, .log-truncated { color: var(--text-dim); }
+.log-empty { padding: 24px; color: var(--text-muted); font-family: var(--font-ui); font-size: 13px; }
+
+.log-hl-error { color: var(--danger); font-weight: 600; }
+.log-hl-warn { color: var(--warn); font-weight: 600; }
+.log-hl-info { color: var(--accent); }
+.log-hl-debug { color: var(--text-dim); }
+.log-hl-http { color: var(--ok); font-weight: 600; }
+.log-hl-id { text-decoration: underline dotted; text-underline-offset: 2px; }
+.log-hl-custom1 { background: rgba(255, 200, 0, 0.28); }
+.log-hl-custom2 { background: rgba(0, 170, 255, 0.24); }
+.log-hl-custom3 { background: rgba(200, 80, 255, 0.24); }
+.log-hl-search { background: var(--match-current-bg); color: inherit; }
+.log-swatch.log-hl-error { background: var(--danger); }
+.log-swatch.log-hl-warn { background: var(--warn); }
+.log-swatch.log-hl-info { background: var(--accent); }
+.log-swatch.log-hl-debug { background: var(--text-dim); }
+.log-swatch.log-hl-http { background: var(--ok); }
+.log-swatch.log-hl-id { background: var(--text-muted); }
+
+.log-scrollbar { width: 12px; position: relative; flex: none; border-left: 1px solid var(--border-subtle); }
+.log-scrollbar-thumb { position: absolute; left: 2px; right: 2px; border-radius: 4px; background: var(--scrollbar-thumb); cursor: pointer; }
+.log-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+
+.log-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 3px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-chrome);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+}
+.log-footer-hint { margin-left: auto; }
+.log-footer-warn { color: var(--warn); }
+
+/* Compare */
+.compare-summary { margin-left: 6px; color: var(--text-muted); white-space: nowrap; }
+.compare-panes { flex: 1; display: flex; min-height: 0; }
+.compare-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.compare-pane + .compare-pane { border-left: 1px solid var(--border); }
+.compare-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.compare-pane-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.compare-badge { padding: 1px 6px; border-radius: 8px; background: var(--bg-hover); font-size: 11px; }
+.compare-editor { flex: 1; min-height: 0; }
+
+.monaco-editor .diff-line-added { background: var(--ok-soft); }
+.monaco-editor .diff-line-removed { background: var(--danger-soft); }
+.monaco-editor .diff-current { box-shadow: inset 3px 0 0 var(--accent); }
+.monaco-editor .diff-char-added { background: rgba(46, 168, 119, 0.35); }
+.monaco-editor .diff-char-removed, .diff-inline-removed .diff-char-removed { background: rgba(220, 76, 76, 0.35); }
+.diff-filler {
+  background: repeating-linear-gradient(-45deg, transparent 0 6px, var(--border-subtle) 6px 7px);
+}
+.diff-inline-removed { background: var(--danger-soft); white-space: pre; overflow: hidden; color: var(--text-muted); }
+.diff-inline-removed-line { padding-left: 4px; text-decoration: line-through; text-decoration-color: rgba(220, 76, 76, 0.5); }
+.diff-glyph { cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--accent); }
+.diff-glyph::before { font-family: var(--font-ui); font-size: 12px; font-weight: 700; }
+.diff-glyph-to-right::before { content: '→'; }
+.diff-glyph-to-left::before { content: '←'; }
+.diff-glyph-revert::before { content: '↶'; }
+
+/* ─── Marks, Scratchpad, prompts ─────────────────────────────────────────── */
+
+/* Six mark colours, readable on the light and dark editor themes. */
+.monaco-editor .zitext-mark { border-radius: 2px; }
+.monaco-editor .zitext-mark-1 { background: rgba(255, 196, 0, 0.38); }
+.monaco-editor .zitext-mark-2 { background: rgba(0, 170, 255, 0.32); }
+.monaco-editor .zitext-mark-3 { background: rgba(60, 200, 120, 0.34); }
+.monaco-editor .zitext-mark-4 { background: rgba(230, 90, 200, 0.32); }
+.monaco-editor .zitext-mark-5 { background: rgba(255, 120, 40, 0.34); }
+.monaco-editor .zitext-mark-6 { background: rgba(150, 110, 255, 0.34); }
+
+.scratchpad-view { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.scratchpad-hint { color: var(--text-dim); }
+.scratchpad-language { margin-left: auto; height: 22px; }
+
+.input-prompt { width: min(440px, calc(100vw - 32px)); }
+.input-prompt-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text); }
+.input-prompt-field { width: 100%; height: 28px; font-family: var(--font-mono); }
+.input-prompt-option { margin-top: 10px; font-size: 13px; }
+.input-prompt-error { margin: 10px 0 0; color: var(--danger); font-size: 12px; }

@@ -264,10 +264,10 @@ The codebase avoids:
 
 ### Development Testing
 
-During development, CSP is **disabled** (`"csp": null` in dev) for:
-- Hot module replacement (HMR)
-- Development tools
-- Faster iteration
+There is no separate development policy (`devCsp` is not set), so
+`npm run tauri dev` runs under the same CSP as the packaged app. A change that
+works in development is therefore already checked against the production
+policy.
 
 ### Production Testing
 
@@ -278,9 +278,9 @@ To test CSP in production mode:
 npm run tauri build
 
 # Run the built application
-# macOS: open src-tauri/target/release/bundle/macos/ZITEXT.app
-# Windows: src-tauri/target/release/bundle/msi/ZITEXT.msi
-# Linux: src-tauri/target/release/ZITEXT
+# macOS: open "src-tauri/target/release/bundle/macos/ZITEXT Editor.app"
+# Windows: src-tauri/target/release/bundle/msi/ZITEXT Editor_<version>_x64_en-US.msi
+# Linux: src-tauri/target/release/zitext-editor
 ```
 
 **What to test:**

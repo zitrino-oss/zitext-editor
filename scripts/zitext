@@ -34,6 +34,20 @@ else
 fi
 
 if [ "$WAIT_MODE" -eq 0 ]; then
+    # Pass absolute paths: on macOS the app starts in "/", so a relative path
+    # (or ".") would otherwise name the wrong file or the whole disk.
+    if ! CURRENT_DIR=$(pwd -P); then
+        echo "zitext: the current folder no longer exists" >&2
+        exit 1
+    fi
+    for argument in "$@"; do
+        shift
+        case "$argument" in
+            '') ;;
+            -*|/*) set -- "$@" "$argument" ;;
+            *) set -- "$@" "$CURRENT_DIR/$argument" ;;
+        esac
+    done
     launch "$@"
     exit 0
 fi
