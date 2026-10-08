@@ -172,8 +172,10 @@ describe('marks', () => {
         vi.useFakeTimers();
         const problems: string[] = [];
         const stop = onMarkProblem(message => problems.push(message));
+        // The worker's verdict is mocked, so any pattern stands in for one
+        // that has become slow on the new text.
         const fake = fakeModel('aaa');
-        const mark = await addMark(fake.model, query('(a+)+$', { regex: true }));
+        const mark = await addMark(fake.model, query('a{2,}', { regex: true }));
         expect(mark.count).toBe(1);
         speed.verdict = 'slow';
         fake.setText('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!');
