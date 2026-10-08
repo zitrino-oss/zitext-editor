@@ -6539,8 +6539,20 @@ mod tests {
         assert_eq!(budget.skipped_links, 2);
     }
 
+    /// File-name searches supersede each other (a newer query stops an older
+    /// one), so tests that run them take turns instead of cutting each
+    /// other short when the test harness runs them in parallel.
+    static NAME_SEARCH_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn name_search_turn() -> std::sync::MutexGuard<'static, ()> {
+        NAME_SEARCH_TESTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn file_name_search_reaches_unexpanded_folders() {
+        let _turn = name_search_turn();
         let directory = tempfile::tempdir().expect("temp directory");
         let root = fs::canonicalize(directory.path()).unwrap();
         fs::create_dir_all(root.join("src/deep")).unwrap();
@@ -6578,6 +6590,7 @@ mod tests {
 
     #[test]
     fn file_name_search_skips_deep_folders_without_stopping() {
+        let _turn = name_search_turn();
         let directory = tempfile::tempdir().expect("temp directory");
         let root = fs::canonicalize(directory.path()).unwrap();
         let mut deep = root.join("a");
