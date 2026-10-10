@@ -15,7 +15,7 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22.13 <23"
+    "node": ">=22.22.2 <23"
   },
   "overrides": {
     "dompurify": "^3.4.14"

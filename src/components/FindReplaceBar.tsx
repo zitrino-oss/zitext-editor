@@ -6,6 +6,10 @@ import {
     setCurrentPreviewMatch,
 } from '../utils/previewSearch';
 import { readToken } from '../utils/theme';
+import { expandReplacement } from '../utils/replacePattern';
+import { isImeComposing } from '../utils/shortcuts';
+import { checkRegexSpeed, regexGuardAvailable } from '../utils/heavyTasks';
+import { addMark, markProblem, setLastFindQuery } from '../utils/marks';
 
 interface FindReplaceBarProps {
     isOpen: boolean;
@@ -26,7 +30,10 @@ interface MatchState {
     current: number;
 }
 
-const WORD_SEPARATORS = '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?_';
+// Monaco's default word separators: "_" is part of a word, so whole-word
+// "user" does not match inside "user_id" (and Replace All cannot corrupt
+// identifiers). Matches Find in Files, which also treats "_" as a word char.
+const WORD_SEPARATORS = '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?';
 
 export function FindReplaceBar({
     isOpen,
@@ -110,8 +117,65 @@ export function FindReplaceBar({
         previewMarksRef.current = [];
     }, []);
 
+    // Regular expressions are first run once in a background worker with a
+    // time limit: a pattern such as (a+)+$ can otherwise freeze
+    // the whole window. Verdicts are kept per pattern and document.
+    const regexVerdicts = useRef(new Map<string, 'checking' | 'ok' | 'slow'>());
+    const [regexTooSlow, setRegexTooSlow] = useState(false);
+    const [markProblemText, setMarkProblem] = useState<string | null>(null);
+    useEffect(() => { setMarkProblem(null); }, [search, useRegex]);
+
+    // "Mark Find Matches" in the command palette marks what is searched here.
+    useEffect(() => {
+        setLastFindQuery(regexTooSlow ? null : { text: search, regex: useRegex, caseSensitive: matchCase, wholeWord });
+    }, [search, useRegex, matchCase, wholeWord, regexTooSlow]);
+
+    /** Keeps every match highlighted (a persistent mark) after Find closes. */
+    const markAll = async () => {
+        const model = getEditor()?.getModel();
+        if (!model || !search || regexTooSlow) return;
+        const query = { text: search, regex: useRegex, caseSensitive: matchCase, wholeWord };
+        const problem = markProblem(query);
+        if (problem) {
+            setMarkProblem(problem);
+            return;
+        }
+        setMarkProblem(null);
+        // A mark re-runs its pattern as the document changes, so a regular
+        // expression must be known to be fast first (the search's own check
+        // may still be running).
+        if (useRegex && regexGuardAvailable()
+            && await checkRegexSpeed(search, matchCase ? 'gm' : 'gim', model.getValue()) === 'slow') {
+            setRegexTooSlow(true);
+            return;
+        }
+        if (!model.isDisposed()) await addMark(model, query);
+    };
+    const doSearchRef = useRef<(resetIndex?: boolean, moveSelection?: boolean) => void>(() => {});
+    /** True when the search may run on `scope` now; otherwise starts the check. */
+    const regexReady = useCallback((scope: string, getText: () => string): boolean => {
+        if (!useRegex || !search || !regexGuardAvailable()) {
+            setRegexTooSlow(false);
+            return true;
+        }
+        const key = `${scope}\u0000${matchCase}\u0000${search}`;
+        const verdict = regexVerdicts.current.get(key);
+        setRegexTooSlow(verdict === 'slow');
+        if (verdict === 'ok') return true;
+        if (verdict === undefined) {
+            regexVerdicts.current.set(key, 'checking');
+            void checkRegexSpeed(search, matchCase ? 'gm' : 'gim', getText()).then(result => {
+                regexVerdicts.current.set(key, result);
+                doSearchRef.current(true, true);
+            });
+        }
+        return false;
+    }, [useRegex, search, matchCase]);
+
     // Core search function
-    const doSearch = useCallback((resetIndex = false) => {
+    // `moveSelection` false only refreshes counts and highlights (used when the
+    // document changes underneath an open bar, so typing is never interrupted).
+    const doSearch = useCallback((resetIndex = false, moveSelection = true) => {
         const ed = getEditor();
         // Monaco is unmounted while previewing, so fall back to the rendered DOM
         // rather than bailing out and reporting a false "0 of 0". A disposed
@@ -131,7 +195,7 @@ export function FindReplaceBar({
             // Suspend the re-render observer: the wrapping below is our own
             // mutation and must not retrigger the search.
             suspendObserverRef.current = true;
-            const marks = search
+            const marks = search && regexReady('preview', () => previewRoot.textContent ?? '')
                 ? highlightPreviewMatches(previewRoot, search, { matchCase, wholeWord, useRegex })
                 : (clearPreviewHighlights(previewRoot), []);
             setTimeout(() => { suspendObserverRef.current = false; }, 0);
@@ -162,8 +226,9 @@ export function FindReplaceBar({
         }
         decoratedEditorRef.current = ed;
         decoratedModelRef.current = model;
-        if (!model || !search) {
+        if (!model || !search || !regexReady(model.uri.toString(), () => model.getValue())) {
             clearDeco();
+            matchRangesRef.current = [];
             setMatches({ total: 0, current: 0 });
             return;
         }
@@ -197,7 +262,9 @@ export function FindReplaceBar({
             }));
             decorationsRef.current = model.deltaDecorations(decorationsRef.current, decos);
 
-            if (found.length > 0) {
+            if (found.length > 0 && !moveSelection) {
+                setMatches({ total: found.length, current: idx + 1 });
+            } else if (found.length > 0) {
                 ed.setSelection(found[idx].range);
                 // Immediate, not the default Smooth: an animated reveal fires several
                 // intermediate onDidScrollChange events, each of which round-trips through
@@ -214,7 +281,8 @@ export function FindReplaceBar({
             clearDeco();
             setMatches({ total: 0, current: 0 });
         }
-    }, [search, matchCase, wholeWord, useRegex, getEditor, getPreviewElement, clearDeco, clearPreview]);
+    }, [search, matchCase, wholeWord, useRegex, getEditor, getPreviewElement, clearDeco, clearPreview, regexReady]);
+    doSearchRef.current = doSearch;
 
     // Re-run search when the query, the options, or the target (editor vs
     // preview) changes. previewActive is in the deps so toggling preview while
@@ -226,17 +294,32 @@ export function FindReplaceBar({
     // The preview renders its HTML asynchronously (marked.parse is awaited), so
     // the body can still be empty when the bar first searches it. Re-run once the
     // real content lands — and on any later re-render.
+    // The preview itself also loads on first use (LazyMarkdownPreview), so its
+    // body may not exist yet: wait for it briefly, then search it.
     useEffect(() => {
         if (!isOpen || !previewActive) return;
-        const root = getPreviewElement?.();
-        if (!root) return;
-        const observer = new MutationObserver(() => {
-            if (suspendObserverRef.current) return; // our own <mark> wrapping
-            previewMarksRef.current = [];
-            doSearch(true);
-        });
-        observer.observe(root, { childList: true, subtree: true, characterData: true });
-        return () => observer.disconnect();
+        let observer: MutationObserver | null = null;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let tries = 0;
+        const attach = () => {
+            const root = getPreviewElement?.();
+            if (!root) {
+                if (tries++ < 100) timer = setTimeout(attach, 50);
+                return;
+            }
+            observer = new MutationObserver(() => {
+                if (suspendObserverRef.current) return; // our own <mark> wrapping
+                previewMarksRef.current = [];
+                doSearch(true);
+            });
+            observer.observe(root, { childList: true, subtree: true, characterData: true });
+            if (tries > 0) doSearch(true); // it arrived after the first search
+        };
+        attach();
+        return () => {
+            if (timer !== undefined) clearTimeout(timer);
+            observer?.disconnect();
+        };
     }, [isOpen, previewActive, getPreviewElement, doSearch]);
 
     // Monaco can keep the editor instance while swapping its model. Clear IDs
@@ -251,6 +334,22 @@ export function FindReplaceBar({
         });
         return () => subscription.dispose();
     }, [isOpen, previewActive, getEditor, clearDeco, doSearch]);
+
+    // Keep matches in step with the document. Cached ranges went stale after
+    // any edit (typing, paste, undo, formatting), and Replace then edited
+    // whatever text had moved into the old range. Refreshing here never moves
+    // the selection, so typing in the editor is not interrupted.
+    useEffect(() => {
+        if (!isOpen || previewActive) return;
+        const ed = getEditor();
+        if (!ed?.getModel()) return;
+        let timer: number | undefined;
+        const subscription = ed.onDidChangeModelContent(() => {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => doSearch(false, false), 30);
+        });
+        return () => { window.clearTimeout(timer); subscription.dispose(); };
+    }, [isOpen, previewActive, getEditor, doSearch]);
 
     useEffect(() => () => { clearDeco(); clearPreview(); }, [clearDeco, clearPreview]);
 
@@ -273,24 +372,67 @@ export function FindReplaceBar({
         doSearch();
     }, [doSearch]);
 
+    // Matches computed against the document as it is right now. Replace never
+    // trusts cached ranges, which may predate the latest edit.
+    const findCurrentMatches = useCallback((model: editor.ITextModel): editor.FindMatch[] | null => {
+        if (!search || !regexReady(model.uri.toString(), () => model.getValue())) return null;
+        try {
+            return model.findMatches(search, true, useRegex, matchCase, wholeWord ? WORD_SEPARATORS : null, true);
+        } catch {
+            return null; // invalid regex
+        }
+    }, [search, useRegex, matchCase, wholeWord, regexReady]);
+
     const handleReplace = useCallback(() => {
         const ed = getEditor();
-        const found = matchRangesRef.current;
-        if (!ed || found.length === 0) return;
-        const range = found[currentIdxRef.current].range;
-        ed.executeEdits('find-replace', [{ range, text: replace }]);
+        const model = ed?.getModel();
+        if (!ed || !model) return;
+        const found = findCurrentMatches(model);
+        if (!found || found.length === 0) {
+            doSearch();
+            return;
+        }
+        // Like VS Code: replace only when the selection is exactly a match;
+        // otherwise this press selects the next match first.
+        const selection = ed.getSelection();
+        const target = selection ? found.find(match => match.range.equalsRange(selection)) : undefined;
+        if (!target) {
+            const from = selection ? model.getOffsetAt(selection.getStartPosition()) : 0;
+            const next = found.findIndex(match => model.getOffsetAt(match.range.getStartPosition()) >= from);
+            currentIdxRef.current = next === -1 ? 0 : next;
+            doSearch();
+            return;
+        }
+        const text = expandReplacement(replace, target.matches, useRegex);
+        const insertedEnd = model.getOffsetAt(target.range.getStartPosition()) + text.length;
+        ed.pushUndoStop();
+        ed.executeEdits('find-replace', [{ range: target.range, text, forceMoveMarkers: true }]);
+        ed.pushUndoStop();
+        // Continue with the first match after the inserted text, so a
+        // replacement that itself matches is not replaced again.
+        const after = findCurrentMatches(model) ?? [];
+        const next = after.findIndex(match => model.getOffsetAt(match.range.getStartPosition()) >= insertedEnd);
+        currentIdxRef.current = next === -1 ? 0 : next;
         doSearch();
-    }, [replace, getEditor, doSearch]);
+    }, [replace, useRegex, getEditor, doSearch, findCurrentMatches]);
 
     const handleReplaceAll = useCallback(() => {
         const ed = getEditor();
-        const found = matchRangesRef.current;
-        if (!ed || found.length === 0) return;
-        const edits = [...found].reverse().map(m => ({ range: m.range, text: replace }));
+        const model = ed?.getModel();
+        if (!ed || !model) return;
+        const found = findCurrentMatches(model);
+        if (!found || found.length === 0) return;
+        const edits = [...found].reverse().map(match => ({
+            range: match.range,
+            text: expandReplacement(replace, match.matches, useRegex),
+        }));
+        // One undo step for the whole Replace All.
+        ed.pushUndoStop();
         ed.executeEdits('find-replace-all', edits);
+        ed.pushUndoStop();
         currentIdxRef.current = 0;
         doSearch(true);
-    }, [replace, getEditor, doSearch]);
+    }, [replace, useRegex, getEditor, doSearch, findCurrentMatches]);
 
     const handleClose = useCallback(() => {
         clearDeco();
@@ -301,6 +443,7 @@ export function FindReplaceBar({
     }, [clearDeco, clearPreview, onClose, getEditor]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (isImeComposing(e)) return; // Enter commits the IME composition
         if (e.key === 'Escape') {
             handleClose();
         } else if (e.key === 'Enter' && !e.shiftKey) {
@@ -319,7 +462,7 @@ export function FindReplaceBar({
     return (
         <div className="fr-bar" onKeyDown={handleKeyDown}>
             {/* Replace can't act on rendered output, so the toggle is inert while
-                previewing — Ctrl+H drops back to the editor instead. */}
+                previewing — the Replace shortcut drops back to the editor instead. */}
             <button
                 className={`fr-toggle-btn ${replaceVisible && !inPreview ? 'open' : ''}`}
                 onClick={() => setReplaceVisible(v => !v)}
@@ -352,8 +495,12 @@ export function FindReplaceBar({
                         </div>
                     </div>
 
-                    <span className={`fr-count ${noResults ? 'no-match' : ''}`}>
-                        {search ? `${matches.current} of ${matches.total}` : ''}
+                    <span
+                        className={`fr-count ${noResults || markProblemText ? 'no-match' : ''}`}
+                        title={markProblemText ?? (regexTooSlow ? 'This regular expression takes too long on this document, so it was not run.' : undefined)}
+                        role={markProblemText ? 'alert' : undefined}
+                    >
+                        {markProblemText ? "Can't mark" : regexTooSlow ? 'Too slow' : search ? `${matches.current} of ${matches.total}` : ''}
                     </span>
 
                     <div className="fr-actions">
@@ -362,6 +509,10 @@ export function FindReplaceBar({
                         </button>
                         <button className="fr-btn fr-btn-default" onClick={() => navigate(1)} title="Next (Enter)">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <button className="fr-btn fr-btn-text" onClick={() => { void markAll(); }} disabled={!search || inPreview || regexTooSlow}
+                            title="Keep every match highlighted in its own colour (a mark), after Find closes">
+                            Mark
                         </button>
                         <button className="fr-btn fr-close" onClick={handleClose} title="Close (Esc)">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -378,7 +529,17 @@ export function FindReplaceBar({
                                 placeholder="Replace"
                                 value={replace}
                                 onChange={(e) => setReplace(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleReplace(); }}}
+                                onKeyDown={(e) => {
+                                    if (isImeComposing(e)) return;
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        // Handled here: letting it bubble to the bar's
+                                        // handler also moved to the next match, so every
+                                        // other match was skipped.
+                                        e.stopPropagation();
+                                        handleReplace();
+                                    }
+                                }}
                                 spellCheck={false}
                             />
                         </div>

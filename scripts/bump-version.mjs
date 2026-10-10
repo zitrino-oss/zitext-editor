@@ -2,8 +2,8 @@
 /**
  * Single-command version bump for ZITEXT Editor.
  *
- *   node scripts/bump-version.mjs <version>      # e.g. 2.1.5
- *   npm run bump 2.1.5
+ *   node scripts/bump-version.mjs <version>      # e.g. 1.2.3
+ *   npm run bump 1.2.3
  *
  * Updates every place the version lives so they never drift again:
  *   - src-tauri/tauri.conf.json   (the authoritative app version)
@@ -30,7 +30,7 @@ const REPO = 'https://github.com/zitrino-oss/zitext-editor';
 
 const version = process.argv[2];
 if (!version || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
-    console.error('Usage: node scripts/bump-version.mjs <semver>   (e.g. 2.1.5)');
+    console.error('Usage: node scripts/bump-version.mjs <semver>   (e.g. 1.2.3)');
     process.exit(1);
 }
 

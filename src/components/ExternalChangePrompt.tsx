@@ -8,7 +8,8 @@ interface ExternalChangePromptProps {
     // when the same tab is modified twice in a row.
     changeCount: number;
     isDeleted?: boolean;
-    onReload: () => void;
+    /** May return a promise; the banner stays until the change is resolved. */
+    onReload: () => void | Promise<unknown>;
     onIgnore: () => void;
 }
 
@@ -20,25 +21,22 @@ export function ExternalChangePrompt({
     onReload,
     onIgnore,
 }: ExternalChangePromptProps) {
-    const [visible, setVisible] = useState(true);
+    // The banner is shown for as long as the tab is marked as changed on disk.
+    // It used to hide itself before Reload ran, so a cancelled or failed
+    // reload left the conflict unresolved and invisible.
+    const [busy, setBusy] = useState(false);
 
     useEffect(() => {
-        setVisible(true);
+        setBusy(false);
     }, [tabId, changeCount]);
 
     const handleReload = () => {
-        setVisible(false);
-        onReload();
+        const result = onReload();
+        if (result && typeof (result as Promise<unknown>).finally === 'function') {
+            setBusy(true);
+            void (result as Promise<unknown>).catch(() => {}).finally(() => setBusy(false));
+        }
     };
-
-    const handleIgnore = () => {
-        setVisible(false);
-        onIgnore();
-    };
-
-    if (!visible) {
-        return null;
-    }
 
     return (
         <div className="external-change-prompt">
@@ -51,12 +49,14 @@ export function ExternalChangePrompt({
                     <button
                         className="external-change-btn external-change-btn-primary"
                         onClick={handleReload}
+                        disabled={busy}
                     >
                         {isDeleted ? 'Save Again' : 'Reload'}
                     </button>
                     <button
                         className="external-change-btn"
-                        onClick={handleIgnore}
+                        onClick={onIgnore}
+                        disabled={busy}
                     >
                         Ignore
                     </button>

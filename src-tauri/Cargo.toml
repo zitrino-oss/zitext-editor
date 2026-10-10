@@ -35,10 +35,11 @@ sha2 = "0.10.9"
 tokio = { version = "1", features = ["sync", "time"] }
 url = "2"
 dirs = "7"
+regex = "1"
 
 # libc is Unix-only — keep this section at the very bottom so any future
 # cross-platform deps appended to [dependencies] don't get silently scoped
-# to Unix (that's exactly the bug that broke the v2.1.2 Windows build).
+# to Unix (that's exactly the bug that once broke the Windows build).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

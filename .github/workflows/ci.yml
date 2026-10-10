@@ -35,7 +35,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Guard against the class of bug that shipped a blank 2.1.4: react and
+      # Guard against a blank app window: react and
       # react-dom MUST be the same version, or react-dom crashes on mount at
       # runtime (the build itself stays green, so nothing else catches it).
       - name: Verify react / react-dom versions match

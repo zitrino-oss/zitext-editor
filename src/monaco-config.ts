@@ -9,15 +9,19 @@ import TypeScriptWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker
 // Resolves to the same singleton editor.main already populated above.
 // @ts-expect-error - no type declarations for this internal module path
 import { MenuRegistry, MenuId } from 'monaco-editor/esm/vs/platform/actions/common/actions';
+import { registerExtraLanguages } from './utils/extraLanguages';
 
 // Configure Monaco to use self-hosted workers
 loader.config({ monaco });
 
+// TOML and Makefile highlighting (Monaco ships neither).
+registerExtraLanguages(monaco);
+
 // Remove Monaco's built-in Copy/Cut/Paste from the editor context menu. They rely on
 // document.execCommand, which Windows WebView2 blocks (paste silently did nothing), so
 // EditorPanel adds WebView2-safe replacements via the Tauri clipboard plugin. Both sets
-// shared the same context-menu group, so every entry appeared twice (duplicate Paste,
-// QA ZITEXT_V2_004). Dropping the built-ins here leaves only the working replacements.
+// shared the same context-menu group, so every entry appeared twice (duplicate Paste).
+// Dropping the built-ins here leaves only the working replacements.
 (() => {
     const BUILT_IN_CLIPBOARD_ACTION_IDS = new Set([
         'editor.action.clipboardCopyAction',
