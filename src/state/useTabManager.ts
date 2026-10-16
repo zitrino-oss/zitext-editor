@@ -1,5 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
 import type { Tab } from '../types';
+import { clearLiveCursor, setLiveCursor } from '../utils/liveCursor';
+import { canPreviewMarkdown } from '../utils/languages';
+
+/** How long cursor/scroll positions wait to settle before reaching tab state. */
+const VIEW_COMMIT_DELAY_MS = 300;
+const VIEW_KEYS = ['cursorLine', 'cursorColumn', 'scrollTop', 'scrollLeft'] as const;
 
 export type TabSaveSnapshot = Pick<
     Tab,
@@ -32,12 +38,53 @@ export function isSavedRevisionCurrent(
  */
 export function useTabManager() {
     const [tabs, setTabs] = useState<Tab[]>([]);
-    const [activeTabId, setActiveTabId] = useState<string | null>(null);
+    const [activeTabId, setActiveTabIdState] = useState<string | null>(null);
     const revisionRef = useRef(new Map<string, number>());
     const contentRef = useRef(new Map<string, string>());
     // Save-critical metadata lives beside content/revision so a queued save
     // never combines a synchronous buffer snapshot with render-lagged tab data.
     const saveMetadataRef = useRef(new Map<string, TabSaveMetadata>());
+
+    // Cursor and scroll positions reach tab state only once they settle:
+    // every move used to re-render the whole app, and
+    // scrolling did so on every frame. The status bar reads the live cursor
+    // from utils/liveCursor instead.
+    const pendingView = useRef(new Map<string, Partial<Tab>>());
+    const viewTimers = useRef(new Map<string, number>());
+
+    const commitView = useCallback((tabId: string): void => {
+        const timer = viewTimers.current.get(tabId);
+        if (timer !== undefined) window.clearTimeout(timer);
+        viewTimers.current.delete(tabId);
+        const view = pendingView.current.get(tabId);
+        pendingView.current.delete(tabId);
+        if (!view || Object.keys(view).length === 0) return;
+        setTabs(prev => prev.map(tab => (tab.id === tabId ? { ...tab, ...view } : tab)));
+    }, []);
+
+    const scheduleView = useCallback((tabId: string, view: Partial<Tab>): void => {
+        pendingView.current.set(tabId, { ...pendingView.current.get(tabId), ...view });
+        const timer = viewTimers.current.get(tabId);
+        if (timer !== undefined) window.clearTimeout(timer);
+        viewTimers.current.set(tabId, window.setTimeout(() => commitView(tabId), VIEW_COMMIT_DELAY_MS));
+    }, [commitView]);
+
+    /** An explicit position (Go to Line, a search result, restore) wins over
+     *  a pending one from earlier cursor moves, which must not land later. */
+    const dropPendingView = useCallback((tabId: string, updates: Partial<Tab>): void => {
+        const view = pendingView.current.get(tabId);
+        if (!view) return;
+        for (const key of VIEW_KEYS) {
+            if (key in updates) delete view[key];
+        }
+    }, []);
+
+    // Switching tabs writes the positions first, so the tab being left keeps
+    // where its cursor was.
+    const setActiveTabId = useCallback((tabId: string | null): void => {
+        for (const pendingTabId of [...pendingView.current.keys()]) commitView(pendingTabId);
+        setActiveTabIdState(tabId);
+    }, [commitView]);
 
     const nextRevision = useCallback((tabId: string): number => {
         const revision = (revisionRef.current.get(tabId) ?? 0) + 1;
@@ -103,7 +150,7 @@ export function useTabManager() {
 
         setActiveTabId(newTabId);
         return newTabId;
-    }, []); // No dependency on `tabs` — uses functional updater form
+    }, [setActiveTabId]); // No dependency on `tabs` — uses functional updater form
 
     /**
      * Add a new tab with specific properties
@@ -114,12 +161,17 @@ export function useTabManager() {
         saveMetadataRef.current.set(tab.id, saveMetadataFromTab(tab));
         setTabs(prev => [...prev, tab]);
         setActiveTabId(tab.id);
-    }, []);
+    }, [setActiveTabId]);
 
     /**
      * Close a tab by ID
      */
     const closeTab = useCallback((tabId: string) => {
+        const timer = viewTimers.current.get(tabId);
+        if (timer !== undefined) window.clearTimeout(timer);
+        viewTimers.current.delete(tabId);
+        pendingView.current.delete(tabId);
+        clearLiveCursor(tabId);
         revisionRef.current.delete(tabId);
         contentRef.current.delete(tabId);
         saveMetadataRef.current.delete(tabId);
@@ -131,10 +183,10 @@ export function useTabManager() {
                 if (newTabs.length > 0) {
                     const closedIndex = prevTabs.findIndex(t => t.id === tabId);
                     const newActiveIndex = Math.min(closedIndex, newTabs.length - 1);
-                    setActiveTabId(newTabs[newActiveIndex].id);
+                    setActiveTabIdState(newTabs[newActiveIndex].id);
                 } else {
                     // No tabs left, set activeTabId to null to show welcome screen
-                    setActiveTabId(null);
+                    setActiveTabIdState(null);
                 }
             }
 
@@ -159,24 +211,17 @@ export function useTabManager() {
      * Update cursor position
      */
     const updateCursorPosition = useCallback((tabId: string, line: number, column: number): void => {
-        setTabs(prev => prev.map(tab =>
-            tab.id === tabId
-                ? { ...tab, cursorLine: line, cursorColumn: column }
-                : tab
-        ));
-    }, []);
+        setLiveCursor(tabId, line, column);
+        scheduleView(tabId, { cursorLine: line, cursorColumn: column });
+    }, [scheduleView]);
 
     const updateScrollPosition = useCallback((
         tabId: string,
         scrollTop: number,
         scrollLeft: number,
     ): void => {
-        setTabs(prev => prev.map(tab =>
-            tab.id === tabId
-                ? { ...tab, scrollTop, scrollLeft }
-                : tab
-        ));
-    }, []);
+        scheduleView(tabId, { scrollTop, scrollLeft });
+    }, [scheduleView]);
 
     const getTabRevision = useCallback((tabId: string): number => {
         return revisionRef.current.get(tabId) ?? 0;
@@ -186,15 +231,23 @@ export function useTabManager() {
         return contentRef.current.get(tabId);
     }, []);
 
-    const getTabSaveSnapshot = useCallback((tabId: string): TabSaveSnapshot => {
+    /**
+     * Synchronous save snapshot, or null once the tab has been closed.
+     * Callers must treat null as "nothing to save": returning defaults here
+     * (empty content, no path) once made a queued save of a closed tab open a
+     * Save As dialog and write an empty file.
+     */
+    const getTabSaveSnapshot = useCallback((tabId: string): TabSaveSnapshot | null => {
         const metadata = saveMetadataRef.current.get(tabId);
+        const content = contentRef.current.get(tabId);
+        if (!metadata || content === undefined) return null;
         return {
-            content: contentRef.current.get(tabId) ?? '',
+            content,
             revision: revisionRef.current.get(tabId) ?? 0,
-            path: metadata?.path ?? null,
-            title: metadata?.title ?? 'Untitled',
-            encoding: metadata?.encoding ?? 'UTF-8',
-            diskVersion: metadata?.diskVersion ?? null,
+            path: metadata.path,
+            title: metadata.title,
+            encoding: metadata.encoding,
+            diskVersion: metadata.diskVersion,
         };
     }, []);
 
@@ -202,6 +255,10 @@ export function useTabManager() {
      * Update tab properties
      */
     const updateTab = useCallback((tabId: string, updates: Partial<Tab>): void => {
+        dropPendingView(tabId, updates);
+        if (updates.cursorLine !== undefined && updates.cursorColumn !== undefined) {
+            setLiveCursor(tabId, updates.cursorLine, updates.cursorColumn);
+        }
         const hasContent = Object.prototype.hasOwnProperty.call(updates, 'content');
         const revision = hasContent ? nextRevision(tabId) : undefined;
         if (hasContent && updates.content !== undefined) {
@@ -223,7 +280,7 @@ export function useTabManager() {
                 ? { ...tab, ...updates, ...(revision === undefined ? {} : { revision }) }
                 : tab
         ));
-    }, [nextRevision]);
+    }, [nextRevision, dropPendingView]);
 
     /**
      * Applies post-save metadata and clears dirty only when no content update
@@ -274,7 +331,7 @@ export function useTabManager() {
     const changeLanguage = useCallback((tabId: string, language: string): void => {
         setTabs(prev => prev.map(tab =>
             tab.id === tabId
-                ? { ...tab, language }
+                ? { ...tab, language, languageLocked: true }
                 : tab
         ));
     }, []);
@@ -319,18 +376,28 @@ export function useTabManager() {
     const activeTab = tabs.find(t => t.id === activeTabId) || null;
 
     /**
-     * Find tab by path
+     * The tab showing `path`, if any (other than `exceptTabId`). Reads the
+     * synchronous metadata, not render state: two opens of the same file in
+     * quick succession (startup events, drag and drop, session restore) must
+     * see each other's tab before React re-renders.
      */
-    const findTabByPath = useCallback((path: string): Tab | undefined => {
-        return tabs.find(tab => tab.path === path);
-    }, [tabs]);
+    /** Ids of the open tabs, read synchronously (not from render state). */
+    const getTabIds = useCallback((): string[] => [...saveMetadataRef.current.keys()], []);
+
+    const findTabIdByPath = useCallback((path: string, exceptTabId?: string): string | undefined => {
+        for (const [tabId, metadata] of saveMetadataRef.current) {
+            if (metadata.path === path && tabId !== exceptTabId) return tabId;
+        }
+        return undefined;
+    }, []);
 
     /**
      * Toggle preview mode for a tab
      */
     const togglePreview = useCallback((tabId: string): void => {
+        // Only Markdown has a preview; turning one off always works.
         setTabs(prev => prev.map(tab =>
-            tab.id === tabId
+            tab.id === tabId && (tab.isPreview || canPreviewMarkdown(tab.language))
                 ? { ...tab, isPreview: !tab.isPreview }
                 : tab
         ));
@@ -370,6 +437,7 @@ export function useTabManager() {
         markExternallyModified,
         clearExternalModification,
         reorderTabs,
-        findTabByPath,
+        findTabIdByPath,
+        getTabIds,
     };
 }

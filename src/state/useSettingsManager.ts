@@ -4,11 +4,12 @@ import type { Settings } from '../types';
 import { DEFAULT_FONT_SIZE, SIDEBAR_DEFAULT_WIDTH } from '../constants';
 import { sanitizeKeybindings } from '../utils/shortcuts';
 import { resolveTheme } from '../utils/theme';
+import { reportPersistenceFailure } from '../utils/persistenceErrors';
 
 /** Font stacks that used to be the defaults. A settings file still holding
  *  one of these has never had the font changed deliberately, so it is moved
  *  to the new default; any other value is the user's own pick and is kept. */
-const SUPERSEDED_DEFAULTS: Record<'fontFamily' | 'uiFont', string[]> = {
+export const SUPERSEDED_DEFAULTS: Record<'fontFamily' | 'uiFont', string[]> = {
     fontFamily: [
         '"Menlo", "Consolas", "JetBrains Mono", monospace',
         '"IBM Plex Mono", "Cascadia Mono", Consolas, monospace',
@@ -35,7 +36,6 @@ const DEFAULT_SETTINGS: Settings = {
     showMinimap: false,
     editorTheme: 'vs-dark',
     keybindings: {},
-    sortJsonKeys: false,
     openedFolder: null,
     sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
     sidebarCollapsed: false,
@@ -77,8 +77,12 @@ export function useSettingsManager() {
     // advances this so a burst of calls (e.g. font-size key-repeat, or theme +
     // editorTheme toggled together) compound instead of each starting from the
     // same stale `settings` closure and overwriting one another.
+    // While updates are being written the ref runs ahead of the rendered
+    // settings; syncing it from render then would drop those updates (and a
+    // failed one could not be taken back), so it syncs only when none are.
     const settingsRef = useRef(settings);
-    settingsRef.current = settings;
+    const pendingWrites = useRef(0);
+    if (pendingWrites.current === 0) settingsRef.current = settings;
 
     /**
      * Load settings from disk
@@ -130,7 +134,7 @@ export function useSettingsManager() {
                 try {
                     await invoke('write_settings', { settings: firstRun });
                 } catch (e) {
-                    console.error('Failed to persist first-run theme:', e);
+                    reportPersistenceFailure('settings', e);
                 }
                 setSettings(firstRun);
                 setIsLoading(false);
@@ -149,12 +153,14 @@ export function useSettingsManager() {
     /**
      * Save settings to disk
      */
-    const saveSettings = useCallback(async (newSettings: Settings): Promise<void> => {
+    const saveSettings = useCallback(async (newSettings: Settings): Promise<boolean> => {
         try {
             await invoke('write_settings', { settings: newSettings });
             setSettings(newSettings);
+            return true;
         } catch (error) {
-            console.error('Failed to save settings:', error);
+            reportPersistenceFailure('settings', error);
+            return false;
         }
     }, []);
 
@@ -171,11 +177,24 @@ export function useSettingsManager() {
             }
         }
 
-        const updated = { ...settingsRef.current, ...updates };
+        const previous = settingsRef.current;
+        const updated = { ...previous, ...updates };
         // Advance the ref synchronously so a second call in the same tick merges
         // onto this result rather than the pre-update value.
         settingsRef.current = updated;
-        await saveSettings(updated);
+        pendingWrites.current += 1;
+        const saved = await saveSettings(updated).finally(() => { pendingWrites.current -= 1; });
+        if (saved) return;
+        // The write failed: take this change back out of the ref, so the next
+        // successful write doesn't persist it behind the user's back. Keys a
+        // later update has changed since are left to that update.
+        const rolledBack = { ...settingsRef.current };
+        for (const key of Object.keys(updates) as (keyof Settings)[]) {
+            if (rolledBack[key] === updated[key]) {
+                (rolledBack as Record<keyof Settings, unknown>)[key] = previous[key];
+            }
+        }
+        settingsRef.current = rolledBack;
     }, [saveSettings]);
 
     return {

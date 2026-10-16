@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { DiskVersion, Tab, SessionFile } from '../types';
+import { errorService } from '../services/ErrorService';
+import { buildSessionSnapshot } from './sessionSnapshot';
+import { reportPersistenceFailure } from './persistenceErrors';
 
 /**
  * Request a native dialog via the menu-action chokepoint, then wait for the
@@ -57,6 +60,8 @@ export async function openFolderDialog(): Promise<string | null> {
 }
 
 export interface FileReadResult {
+    /** The path as the backend resolved it (symlinks, letter case). */
+    path?: string;
     content: string;
     size: number;
     encoding: string;
@@ -89,6 +94,7 @@ export async function writeFileContent(
     content: string,
     encoding: string = 'UTF-8',
     expectedVersion: DiskVersion | null = null,
+    allowReadOnly = false,
 ): Promise<FileWriteResult> {
     try {
         return await invoke<FileWriteResult>('write_file_content', {
@@ -98,11 +104,15 @@ export async function writeFileContent(
             expectedModified: expectedVersion?.modified,
             expectedSize: expectedVersion?.size,
             expectedHash: expectedVersion?.hash,
+            allowReadOnly,
         });
     } catch (error) {
         console.error('Failed to write file:', error);
         const errorMessage = error instanceof Error ? error.message : String(error);
-        throw new Error(`Failed to write file: ${errorMessage}`);
+        // The backend's own message may already say so.
+        throw new Error(errorMessage.startsWith('Failed to write file')
+            ? errorMessage
+            : `Failed to write file: ${errorMessage}`);
     }
 }
 
@@ -110,7 +120,7 @@ export async function addRecentFile(path: string): Promise<void> {
     try {
         await invoke('add_recent_file', { path });
     } catch (error) {
-        console.error('Failed to add recent file:', error);
+        reportPersistenceFailure('recent files', error);
     }
 }
 
@@ -136,64 +146,48 @@ export async function rebuildNativeMenu(): Promise<void> {
     }
 }
 
-const MAX_UNTITLED_CONTENT_BYTES = 10 * 1024 * 1024;
-// Larger cap for unsaved edits to disk-backed files preserved for crash
-// recovery — most source files fit comfortably; very large dirty buffers fall
-// back to a plain disk re-read on restore (losing only the unsaved delta).
-const MAX_DIRTY_DISK_CONTENT_BYTES = 10 * 1024 * 1024;
+// Shown once per distinct problem, not on every 30-second snapshot.
+let lastOmittedWarning = '';
+let snapshotFailureWarned = false;
 
-// Encodes once to measure the real UTF-8 byte length. Using string `.length`
-// (UTF-16 code units) under-counts multibyte content and lets a file exceed the
-// intended byte cap by up to ~3x.
-const byteLength = (s: string): number => new TextEncoder().encode(s).length;
+// Snapshots are written one at a time, in the order they were taken: two
+// overlapping writes could otherwise finish out of order and leave the older
+// snapshot stored.
+let snapshotQueue: Promise<void> = Promise.resolve();
 
-export async function saveSession(tabs: Tab[], activeTabId: string | null): Promise<void> {
+export function saveSession(tabs: Tab[], activeTabId: string | null): Promise<void> {
+    const next = snapshotQueue.then(() => writeSessionSnapshot(tabs, activeTabId));
+    snapshotQueue = next.catch(() => {});
+    return next;
+}
+
+async function writeSessionSnapshot(tabs: Tab[], activeTabId: string | null): Promise<void> {
+    const { session, omitted } = buildSessionSnapshot(tabs, activeTabId);
+
+    const omittedKey = omitted.join('\n');
+    if (omitted.length > 0 && omittedKey !== lastOmittedWarning) {
+        const names = omitted.slice(0, 3).map(name => `"${name}"`).join(', ');
+        const more = omitted.length > 3 ? ` and ${omitted.length - 3} more` : '';
+        errorService.showWarning(
+            `Crash recovery can't keep a copy of ${omitted.length} unsaved document(s) (${names}${more}) ` +
+            'because they are too large. Save them to protect your changes.',
+        );
+    }
+    lastOmittedWarning = omittedKey;
+
     try {
-        const session: SessionFile[] = [];
-        for (const tab of tabs) {
-            if (tab.path !== null) {
-                const base: SessionFile = {
-                    path: tab.path,
-                    cursor_line: tab.cursorLine,
-                    cursor_column: tab.cursorColumn,
-                    scroll_top: tab.scrollTop,
-                    scroll_left: tab.scrollLeft,
-                    is_active: tab.id === activeTabId,
-                };
-                // Preserve unsaved edits to a saved file so a crash before the
-                // next manual save doesn't lose them. Non-dirty files just
-                // re-read from disk on restore (no content stored).
-                if (tab.isDirty && byteLength(tab.content) <= MAX_DIRTY_DISK_CONTENT_BYTES) {
-                    session.push({ ...base, is_dirty: true, content: tab.content });
-                } else {
-                    session.push(base);
-                }
-                continue;
-            }
-            // Untitled file — skip empty scratch tabs. They hold nothing worth
-            // recovering and, if persisted, reappear (and accumulate) as blank
-            // untitled tabs on every launch. Only preserve untitled tabs that
-            // actually contain unsaved content so crash-recovery still works.
-            if (tab.content.trim().length === 0) continue;
-            const content = byteLength(tab.content) <= MAX_UNTITLED_CONTENT_BYTES ? tab.content : undefined;
-            session.push({
-                path: tab.title,
-                cursor_line: tab.cursorLine,
-                cursor_column: tab.cursorColumn,
-                scroll_top: tab.scrollTop,
-                scroll_left: tab.scrollLeft,
-                is_untitled: true,
-                is_active: tab.id === activeTabId,
-                content,
-            });
-        }
-
-        await invoke('save_session', {
-            session, activeTabPath:
-                activeTabId ? tabs.find(t => t.id === activeTabId)?.path : null
-        });
+        const activeTab = activeTabId ? tabs.find(t => t.id === activeTabId) : undefined;
+        await invoke('save_session', { session, activeTabPath: activeTab?.path ?? null });
+        snapshotFailureWarned = false;
     } catch (error) {
         console.error('Failed to save session:', error);
+        if (!snapshotFailureWarned) {
+            snapshotFailureWarned = true;
+            const message = error instanceof Error ? error.message : String(error);
+            errorService.showWarning(
+                `Crash recovery snapshots are failing (${message}). Save your work to keep it safe.`,
+            );
+        }
     }
 }
 
@@ -207,11 +201,48 @@ export async function getLastSession(): Promise<SessionFile[]> {
     }
 }
 
-export function detectEOL(content: string): 'LF' | 'CRLF' {
-    if (content.includes('\r\n')) {
-        return 'CRLF';
+export type LineEnding = 'LF' | 'CRLF' | 'Mixed';
+
+export interface LineEndingInfo {
+    /** What the status bar shows: Mixed when the file uses more than one style. */
+    eol: LineEnding;
+    /** The single style the editor converts the text to (Monaco keeps one). */
+    normalizedTo: 'LF' | 'CRLF';
+    mixed: boolean;
+}
+
+/**
+ * Line endings of a document. Monaco stores one line-ending
+ * style per document: a file mixing styles, or using old Mac CR-only line
+ * breaks, is converted to the majority style (CR counts toward CRLF).
+ */
+export function analyzeLineEndings(content: string): LineEndingInfo {
+    let crlf = 0;
+    let lf = 0;
+    let cr = 0;
+    for (let i = 0; i < content.length; i++) {
+        const ch = content.charCodeAt(i);
+        if (ch === 13) {
+            if (content.charCodeAt(i + 1) === 10) { crlf++; i++; } else { cr++; }
+        } else if (ch === 10) {
+            lf++;
+        }
     }
-    return 'LF';
+    const total = crlf + lf + cr;
+    const normalizedTo = total > 0 && cr + crlf > total / 2 ? 'CRLF' : 'LF';
+    const mixed = cr > 0 || (crlf > 0 && lf > 0);
+    return { eol: mixed ? 'Mixed' : normalizedTo, normalizedTo, mixed };
+}
+
+export function detectEOL(content: string): LineEnding {
+    return analyzeLineEndings(content).eol;
+}
+
+/** Number of lines, counted without splitting the text into an array. */
+export function countLines(content: string): number {
+    let lines = 1;
+    for (let index = content.indexOf('\n'); index !== -1; index = content.indexOf('\n', index + 1)) lines++;
+    return lines;
 }
 
 export function getFileName(path: string | null): string {

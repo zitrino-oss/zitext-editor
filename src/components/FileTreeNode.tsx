@@ -31,6 +31,14 @@ export function FileTreeNode({ node, level, onClick, onExpand, activePath, dirty
         }
     };
 
+    if (node.placeholder) {
+        return (
+            <div className="ft-node">
+                <div role="treeitem" aria-disabled="true" tabIndex={-1} className="ft-row ft-note" style={{ paddingLeft: `${level * 16 + 24}px` }}>{node.name}</div>
+            </div>
+        );
+    }
+
     const hasChildren = node.isDirectory && node.children && node.children.length > 0;
     const isActive = !node.isDirectory && !!activePath && node.path === activePath;
     const isDirty = !node.isDirectory && !!dirtyPaths?.has(node.path);

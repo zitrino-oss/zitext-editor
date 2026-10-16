@@ -3,6 +3,15 @@ import { createPortal } from 'react-dom';
 import type { Tab } from '../types';
 import { FileIcon } from '../utils/fileIcons';
 import { Tooltip } from './Tooltip';
+import { isImeComposing, isMac } from '../utils/shortcuts';
+
+/** A Large File / Log or Compare view, listed after the document tabs. */
+export interface ViewTab {
+    id: string;
+    kind: 'log' | 'compare' | 'scratchpad';
+    title: string;
+    tooltip: string;
+}
 
 interface TabBarProps {
     tabs: Tab[];
@@ -20,6 +29,31 @@ interface TabBarProps {
     onTogglePreview: () => void;
     isPreview: boolean;
     canPreview: boolean;
+    views?: ViewTab[];
+    activeViewId?: string | null;
+    onViewClick?: (viewId: string) => void;
+    onViewClose?: (viewId: string) => void;
+}
+
+function ViewTabIcon({ kind }: { kind: ViewTab['kind'] }) {
+    if (kind === 'scratchpad') {
+        return (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M4 4h12l4 4v12H4z" /><line x1="8" y1="11" x2="16" y2="11" /><line x1="8" y1="15" x2="13" y2="15" />
+            </svg>
+        );
+    }
+    return kind === 'log' ? (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="10" x2="16" y2="10" />
+            <line x1="4" y1="14" x2="20" y2="14" /><line x1="4" y1="18" x2="12" y2="18" />
+        </svg>
+    ) : (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <rect x="3" y="4" width="7" height="16" rx="1" /><rect x="14" y="4" width="7" height="16" rx="1" />
+            <line x1="5" y1="9" x2="8" y2="9" /><line x1="16" y1="13" x2="19" y2="13" />
+        </svg>
+    );
 }
 
 interface TabItemProps {
@@ -50,6 +84,7 @@ function TabItem({
     onPinToggle,
 }: TabItemProps) {
     const [isEditing, setIsEditing] = useState(false);
+    const editingRef = useRef(false);
     const [editValue, setEditValue] = useState(tab.title);
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -66,17 +101,27 @@ function TabItem({
 
     const handleDoubleClick = () => {
         setEditValue(tab.title);
+        editingRef.current = true;
         setIsEditing(true);
     };
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') { onRename(tab.id, editValue); setIsEditing(false); }
-        else if (e.key === 'Escape') { setIsEditing(false); }
+    // Enter, Escape and the blur that follows them all end one edit; only
+    // the first decides, so a rename is never submitted twice.
+    const finishEditing = (commit: boolean) => {
+        if (!editingRef.current) return;
+        editingRef.current = false;
+        setIsEditing(false);
+        const name = editValue.trim();
+        if (commit && name !== '' && name !== tab.title) onRename(tab.id, name);
     };
 
-    const handleBlur = () => {
-        if (isEditing) { onRename(tab.id, editValue); setIsEditing(false); }
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (isImeComposing(e.nativeEvent)) return;
+        if (e.key === 'Enter') finishEditing(true);
+        else if (e.key === 'Escape') finishEditing(false);
     };
+
+    const handleBlur = () => finishEditing(true);
 
     return (
         <div
@@ -161,6 +206,7 @@ function TabItem({
                 <button
                     className="tab-close"
                     title="Close Tab"
+                    aria-label="Close Tab"
                     onClick={(e) => { e.stopPropagation(); onClose(); }}
                 >
                     ×
@@ -173,6 +219,7 @@ function TabItem({
 export function TabBar({
     tabs, activeTabId, onTabClick, onTabClose, onNewTab, onReorder, onRename, onPinToggle,
     onToggleSplitView, splitViewEnabled, onTogglePreview, isPreview, canPreview,
+    views = [], activeViewId = null, onViewClick, onViewClose,
 }: TabBarProps) {
     const tabBarRef = useRef<HTMLDivElement>(null);
     const floatRef = useRef<HTMLDivElement>(null);
@@ -391,7 +438,40 @@ export function TabBar({
                         onPinToggle={onPinToggle}
                     />
                 ))}
-                <button className="tab-new" onClick={onNewTab} title="New File (Cmd+N)">+</button>
+                {views.map(view => {
+                    const isActive = view.id === activeViewId;
+                    return (
+                        <div
+                            key={view.id}
+                            role="tab"
+                            aria-selected={isActive}
+                            aria-controls="editor-workspace"
+                            tabIndex={isActive ? 0 : -1}
+                            className={`tab tab-view ${isActive ? 'active' : ''}`}
+                            title={view.tooltip}
+                            onClick={() => onViewClick?.(view.id)}
+                            onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    onViewClick?.(view.id);
+                                }
+                            }}
+                            onAuxClick={(event) => { if (event.button === 1) onViewClose?.(view.id); }}
+                        >
+                            <span className="tab-icon" aria-hidden="true"><ViewTabIcon kind={view.kind} /></span>
+                            <span className="tab-name"><span className="tab-title-text">{view.title}</span></span>
+                            <button
+                                className="tab-close"
+                                title="Close"
+                                aria-label={`Close ${view.title}`}
+                                onClick={(e) => { e.stopPropagation(); onViewClose?.(view.id); }}
+                            >
+                                ×
+                            </button>
+                        </div>
+                    );
+                })}
+                <button className="tab-new" onClick={onNewTab} title={`New File (${isMac ? '⌘N' : 'Ctrl+N'})`} aria-label="New File">+</button>
 
                 <div className="tab-bar-actions">
                     {/* aria-label rather than title: the buttons are icon-only, so

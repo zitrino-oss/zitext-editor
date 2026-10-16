@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { requiresShortcutModifier } from '../utils/shortcuts';
+import { requiresShortcutModifier, shortcutKeyOf } from '../utils/shortcuts';
+import { COMMANDS, FIXED_SHORTCUTS, mod } from '../utils/commandRegistry';
 
 interface KeybindingEditorProps {
     isOpen: boolean;
@@ -8,29 +9,6 @@ interface KeybindingEditorProps {
     keybindings: Record<string, string>;
     onSave: (keybindings: Record<string, string>) => void;
 }
-
-interface CommandDef {
-    id: string;
-    label: string;
-    defaultKey: string;
-}
-
-const isMac = typeof window !== 'undefined' && /Macintosh|Mac OS X/i.test(navigator.userAgent);
-const mod = isMac ? 'Cmd' : 'Ctrl';
-
-const COMMANDS: CommandDef[] = [
-    { id: 'new', label: 'New File', defaultKey: `${mod}+N` },
-    { id: 'open', label: 'Open File', defaultKey: `${mod}+O` },
-    { id: 'openFolder', label: 'Open Folder', defaultKey: `${mod}+K` },
-    { id: 'save', label: 'Save', defaultKey: `${mod}+S` },
-    { id: 'saveAs', label: 'Save As', defaultKey: `${mod}+Shift+S` },
-    { id: 'close', label: 'Close Tab', defaultKey: `${mod}+W` },
-    { id: 'find', label: 'Find', defaultKey: `${mod}+F` },
-    { id: 'replace', label: 'Find & Replace', defaultKey: `${mod}+H` },
-    { id: 'goToLine', label: 'Go to Line', defaultKey: `${mod}+G` },
-    { id: 'commandPalette', label: 'Command Palette', defaultKey: `${mod}+Shift+P` },
-    { id: 'wordWrap', label: 'Toggle Word Wrap', defaultKey: 'Alt+Z' },
-];
 
 /** Render a key combo as styled <kbd> pills */
 function KeyCombo({ combo }: { combo: string }) {
@@ -73,15 +51,26 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
         if (e.ctrlKey || e.metaKey) parts.push(mod);
         if (e.shiftKey) parts.push('Shift');
         if (e.altKey) parts.push('Alt');
+        // The physical key for letters and digits, as the shortcut matcher
+        // uses: Option on macOS and non-Latin layouts change e.key ("Ƒ", "Ы"),
+        // and a binding recorded that way never fired.
+        const physical = shortcutKeyOf(e.nativeEvent);
         let key = e.key;
         if (key === ' ') key = 'Space';
-        else if (key.length === 1) key = key.toUpperCase();
+        // "+" is the separator in stored bindings, so the key is named.
+        else if (physical === '+') key = 'Plus';
+        else if (physical.length === 1) key = physical.toUpperCase();
         if (['Control', 'Meta', 'Shift', 'Alt'].includes(key)) return;
         if (requiresShortcutModifier(key) && !(e.ctrlKey || e.metaKey || e.altKey)) {
             setCaptureError('Typing and navigation keys require Ctrl/Cmd or Alt so editor input remains available.');
             return;
         }
         parts.push(key);
+        const fixedOwner = FIXED_SHORTCUTS[parts.join('+')];
+        if (fixedOwner) {
+            setCaptureError(`${parts.join('+')} is already used by ${fixedOwner} and can't be reassigned.`);
+            return;
+        }
         setCaptureError(null);
         setEditedBindings(prev => ({ ...prev, [commandId]: parts.join('+') }));
         setEditingCommand(null);
@@ -129,9 +118,11 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
                 <div className="kb-header">
                     <div>
                         <h2 className="kb-title">Keyboard Shortcuts</h2>
-                        <p className="kb-subtitle">Click a binding, then press the new combination</p>
+                        <p className="kb-subtitle">
+                            Click a binding, then press the new combination.
+                        </p>
                     </div>
-                    <button className="kb-close" onClick={onClose}>
+                    <button className="kb-close" onClick={onClose} aria-label="Close">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
                     </button>
                 </div>

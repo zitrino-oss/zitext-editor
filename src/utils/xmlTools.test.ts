@@ -48,3 +48,16 @@ describe('XML formatter', () => {
         expect(validateXml('<root><child></root>').valid).toBe(false);
     });
 });
+
+describe('formatXml keeps the document as written', () => {
+    it('keeps entity and character references', () => {
+        const formatted = formatXml('<root><a>Tom &amp; Jerry &#169; &#xA9; &quot;q&quot; &apos;</a><b x="1 &amp; 2 &#10;"/></root>');
+        expect(formatted).toContain('<a>Tom &amp; Jerry &#169; &#xA9; &quot;q&quot; &apos;</a>');
+        expect(formatted).toContain('x="1 &amp; 2 &#10;"');
+    });
+
+    it('puts comments before the root element on their own line', () => {
+        expect(formatXml('<?xml version="1.0"?><!-- header --><root><a/></root>'))
+            .toBe('<?xml version="1.0"?>\n<!-- header -->\n<root>\n  <a/>\n</root>');
+    });
+});

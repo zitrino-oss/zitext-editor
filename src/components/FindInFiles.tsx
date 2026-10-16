@@ -1,14 +1,8 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { FileIcon } from '../utils/fileIcons';
+import { incompleteSearchNotes, type SearchMatch, type SearchReport } from '../utils/searchReport';
 
-interface SearchMatch {
-    file_path: string;
-    line_number: number;
-    line_content: string;
-    match_start: number;
-    match_end: number;
-}
 
 interface GroupedResult {
     filePath: string;
@@ -22,9 +16,11 @@ interface FindInFilesProps {
     onOpenFile: (path: string, line: number) => void;
     onOpenFolder: () => void;
     onClose: () => void;
+    /** Hidden panels stay mounted so the query and results survive. */
+    visible?: boolean;
 }
 
-export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClose }: FindInFilesProps) {
+export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClose, visible = true }: FindInFilesProps) {
     const [query, setQuery] = useState('');
     const [caseSensitive, setCaseSensitive] = useState(false);
     const [wholeWord, setWholeWord] = useState(false);
@@ -39,8 +35,21 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
     // input) so "No results found" only appears after a search has run — not on every
     // keystroke before the user presses Enter / clicks Search.
     const [searchedQuery, setSearchedQuery] = useState('');
+    const [notes, setNotes] = useState<string[]>([]);
     const inputRef = useRef<HTMLInputElement>(null);
     const requestIdRef = useRef(0);
+
+    // Results belong to the folder they came from: a new folder drops them,
+    // and a search still running for the old folder is ignored when it ends.
+    useEffect(() => {
+        requestIdRef.current += 1;
+        setResults([]);
+        setTotalMatches(0);
+        setSearchedQuery('');
+        setNotes([]);
+        setSearchError(null);
+        setIsSearching(false);
+    }, [folderPath]);
 
     const runSearch = useCallback(async (q: string, cs: boolean, ww: boolean) => {
         const requestId = ++requestIdRef.current;
@@ -58,13 +67,15 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
         const startedAt = performance.now();
 
         try {
-            const matches = await invoke<SearchMatch[]>('search_in_files', {
+            const report = await invoke<SearchReport>('search_in_files', {
                 folder: folderPath,
                 query: q,
                 caseSensitive: cs,
                 wholeWord: ww,
             });
             if (requestId !== requestIdRef.current) return;
+            const matches = report.matches;
+            setNotes(incompleteSearchNotes(report));
 
             // Group by file
             const grouped = new Map<string, SearchMatch[]>();
@@ -87,6 +98,7 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
         } catch (err) {
             if (requestId !== requestIdRef.current) return;
             setSearchError((err as Error).message || String(err));
+            setNotes([]);
             setResults([]);
             setTotalMatches(0);
             setSearchedQuery(q);
@@ -123,13 +135,15 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
         return { before: displayBefore, match, after: displayAfter };
     };
 
+    if (!visible) return null;
+
     if (!folderPath) {
         return (
             <div className="find-in-files" style={{ width: `${width}px` }}>
                 <div className="file-explorer-header">
                     <span className="file-explorer-title">SEARCH</span>
                     <div className="file-explorer-actions">
-                        <button className="file-explorer-action-btn" onClick={onClose} title="Close Search">
+                        <button className="file-explorer-action-btn" onClick={onClose} title="Close Search" aria-label="Close Search">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <line x1="18" y1="6" x2="6" y2="18"/>
                                 <line x1="6" y1="6" x2="18" y2="18"/>
@@ -150,7 +164,7 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
             <div className="file-explorer-header">
                 <span className="file-explorer-title">SEARCH</span>
                 <div className="file-explorer-actions">
-                    <button className="file-explorer-action-btn" onClick={onClose} title="Close Search">
+                    <button className="file-explorer-action-btn" onClick={onClose} title="Close Search" aria-label="Close Search">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <line x1="18" y1="6" x2="6" y2="18"/>
                             <line x1="6" y1="6" x2="18" y2="18"/>
@@ -222,7 +236,6 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
                 <div className="find-in-files-summary">
                     <span>
                         {totalMatches} result{totalMatches !== 1 ? 's' : ''} &middot; {results.length} file{results.length !== 1 ? 's' : ''}
-                        {totalMatches >= 500 && ' (limit reached)'}
                     </span>
                     {elapsed !== null && (
                         <span className="find-in-files-timing">{elapsed.toFixed(2)} s</span>
@@ -231,7 +244,16 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
             )}
 
             {results.length === 0 && searchedQuery && !isSearching && !searchError && (
-                <div className="find-in-files-no-results">No results found for "{searchedQuery}"</div>
+                <div className="find-in-files-no-results">
+                    {notes.length ? `No results found for "${searchedQuery}" in the files searched` : `No results found for "${searchedQuery}"`}
+                </div>
+            )}
+
+            {searchedQuery && !isSearching && !searchError && (
+                <div className="find-in-files-notes" role="status">
+                    {notes.map(note => <div key={note}>{note}</div>)}
+                    <div>Searches saved files on disk; unsaved changes are not included.</div>
+                </div>
             )}
 
             <div className="find-in-files-results">

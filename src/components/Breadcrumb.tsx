@@ -1,11 +1,10 @@
 interface BreadcrumbProps {
     path: string | null;
-    onRevealInExplorer?: () => void;
     /** Line count of the open buffer, shown right-aligned as in the design. */
     lineCount?: number;
 }
 
-export function Breadcrumb({ path, onRevealInExplorer, lineCount }: BreadcrumbProps) {
+export function Breadcrumb({ path, lineCount }: BreadcrumbProps) {
     if (!path) return null;
 
     const parts = path.split(/[/\\]/);
@@ -27,10 +26,7 @@ export function Breadcrumb({ path, onRevealInExplorer, lineCount }: BreadcrumbPr
                 return (
                     <span key={i} className="breadcrumb-item-wrapper">
                         {i > 0 && <span className="breadcrumb-sep">/</span>}
-                        <span
-                            className={`breadcrumb-item ${isLast ? 'breadcrumb-item-active' : 'breadcrumb-item-dir'}`}
-                            onClick={isLast && onRevealInExplorer ? onRevealInExplorer : undefined}
-                        >
+                        <span className={`breadcrumb-item ${isLast ? 'breadcrumb-item-active' : 'breadcrumb-item-dir'}`}>
                             {part}
                         </span>
                     </span>

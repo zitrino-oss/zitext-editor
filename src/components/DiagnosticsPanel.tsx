@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { getHealthSummary, type SessionHealthSummary } from '../utils/sessionHealth';
+import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getMetrics } from '../utils/perfMetrics';
 
 interface DiagnosticsPanelProps {
@@ -47,7 +48,9 @@ export function DiagnosticsPanel({ isOpen, onClose, tabCount }: DiagnosticsPanel
             ),
         ].filter(Boolean).join('\n');
 
-        navigator.clipboard.writeText(lines).catch(console.error);
+        // The Tauri clipboard works from every context; the browser API is
+        // refused in packaged WebKit webviews.
+        writeText(lines).catch(console.error);
     };
 
     return (
@@ -55,7 +58,7 @@ export function DiagnosticsPanel({ isOpen, onClose, tabCount }: DiagnosticsPanel
             <div className="modal diagnostics-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="modal-header">
                     <h3>Diagnostics</h3>
-                    <button className="modal-close" onClick={onClose}>×</button>
+                    <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
                 </div>
                 <div className="modal-body">
                     <div className="settings-info">

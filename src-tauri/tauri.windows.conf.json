@@ -2,6 +2,10 @@
   "app": {
     "windows": [
       {
+        "title": "ZITEXT Editor",
+        "width": 1200,
+        "height": 800,
+        "dragDropEnabled": true,
         "decorations": false
       }
     ]

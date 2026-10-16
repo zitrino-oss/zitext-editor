@@ -32,9 +32,7 @@ fn bench_read_small_file(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
     let path = create_test_file(&dir, "small.txt", 10 * 1024); // 10 KB
     c.bench_function("read_file_10KB", |b| {
-        b.iter(|| {
-            let _ = black_box(benchmark_support::read_authorized_text(&path).unwrap());
-        });
+        b.iter(|| black_box(benchmark_support::read_file(&path).unwrap()));
     });
 }
 
@@ -42,9 +40,7 @@ fn bench_read_medium_file(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
     let path = create_test_file(&dir, "medium.txt", 500 * 1024); // 500 KB
     c.bench_function("read_file_500KB", |b| {
-        b.iter(|| {
-            let _ = black_box(benchmark_support::read_authorized_text(&path).unwrap());
-        });
+        b.iter(|| black_box(benchmark_support::read_file(&path).unwrap()));
     });
 }
 
@@ -52,69 +48,56 @@ fn bench_read_large_file(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
     let path = create_test_file(&dir, "large.txt", 5 * 1024 * 1024); // 5 MB
     c.bench_function("read_file_5MB", |b| {
+        b.iter(|| black_box(benchmark_support::read_file(&path).unwrap()));
+    });
+}
+
+/// A save of an open 1 MB file: conflict re-read and hash, then the atomic
+/// replace, exactly as pressing Save runs it.
+fn bench_save_file(c: &mut Criterion) {
+    let dir = TempDir::new().unwrap();
+    let path = create_test_file(&dir, "save_test.txt", 1024 * 1024);
+    let mut file = benchmark_support::open_file(&path).unwrap();
+    let edits = ["x".repeat(1024 * 1024), "y".repeat(1024 * 1024)];
+    let mut turn = 0;
+    c.bench_function("save_file_1MB", |b| {
         b.iter(|| {
-            let _ = black_box(benchmark_support::read_authorized_text(&path).unwrap());
+            turn ^= 1;
+            file.save(black_box(&edits[turn])).unwrap();
         });
     });
 }
 
-fn bench_write_file(c: &mut Criterion) {
+fn bench_search_folder(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
-    let path = dir.path().join("write_test.txt");
-    let content = "x".repeat(1024 * 1024); // 1 MB
-    c.bench_function("write_file_1MB", |b| {
-        b.iter(|| {
-            benchmark_support::write_authorized_atomic(&path, black_box(content.as_bytes()))
-                .unwrap();
-        });
-    });
-}
-
-fn bench_search_file(c: &mut Criterion) {
-    let dir = TempDir::new().unwrap();
-    let path = create_test_file(&dir, "search.txt", 1024 * 1024); // 1 MB
-    c.bench_function("search_file_1MB", |b| {
-        b.iter(|| {
-            let content = fs::read_to_string(&path).unwrap();
-            let needle = "Lorem ipsum";
-            let count = content.matches(black_box(needle)).count();
-            black_box(count);
-        });
+    create_test_file(&dir, "search.txt", 1024 * 1024); // 1 MB
+    create_test_tree(&dir, 200);
+    benchmark_support::open_folder(dir.path());
+    c.bench_function("search_in_files_1MB_plus_200_files", |b| {
+        b.iter(|| black_box(benchmark_support::search_folder(dir.path(), "Lorem ipsum").unwrap()));
     });
 }
 
 fn bench_read_directory(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
     create_test_tree(&dir, 200);
-    c.bench_function("read_directory_200_files", |b| {
-        b.iter(|| {
-            let mut count = 0usize;
-            fn walk(path: &std::path::Path, count: &mut usize) {
-                if let Ok(entries) = fs::read_dir(path) {
-                    for entry in entries.flatten() {
-                        *count += 1;
-                        let p = entry.path();
-                        if p.is_dir() {
-                            walk(&p, count);
-                        }
-                    }
-                }
-            }
-            walk(black_box(dir.path()), &mut count);
-            black_box(count);
-        });
+    for i in 0..200 {
+        fs::write(dir.path().join(format!("top_{i}.txt")), b"x").unwrap();
+    }
+    benchmark_support::open_folder(dir.path());
+    c.bench_function("read_directory_205_entries", |b| {
+        b.iter(|| black_box(benchmark_support::list_folder(dir.path()).unwrap()));
+    });
+    c.bench_function("count_project_files_400", |b| {
+        b.iter(|| black_box(benchmark_support::count_files(dir.path()).unwrap()));
     });
 }
 
 fn bench_validate_path(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
     let path = create_test_file(&dir, "valid.txt", 100);
-    let path_str = path.to_str().unwrap().to_string();
     c.bench_function("validate_path", |b| {
-        b.iter(|| {
-            let p = std::path::PathBuf::from(black_box(&path_str));
-            let _ = benchmark_support::authorize_for_benchmark(&p).unwrap();
-        });
+        b.iter(|| black_box(benchmark_support::authorize_for_benchmark(black_box(&path)).unwrap()));
     });
 }
 
@@ -123,8 +106,8 @@ criterion_group!(
     bench_read_small_file,
     bench_read_medium_file,
     bench_read_large_file,
-    bench_write_file,
-    bench_search_file,
+    bench_save_file,
+    bench_search_folder,
     bench_read_directory,
     bench_validate_path,
 );

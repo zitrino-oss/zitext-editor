@@ -1,8 +1,6 @@
-import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { UpdateInfo } from '../hooks/useUpdateChecker';
 
-const SKIPPED_KEY_PREFIX = 'update_skipped_v';
 const DOWNLOADS_URL = 'https://zitext.com/downloads.html';
 
 interface UpdateAvailableModalProps {
@@ -17,13 +15,6 @@ interface UpdateAvailableModalProps {
  * the website rather than in-app.
  */
 export function UpdateAvailableModal({ update, onLater, onSkip }: UpdateAvailableModalProps) {
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onLater();
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [onLater]);
 
     function handleDownload() {
         // open_url_in_browser is restricted to https://zitext.com on the backend.
@@ -31,16 +22,14 @@ export function UpdateAvailableModal({ update, onLater, onSkip }: UpdateAvailabl
         onLater();
     }
 
-    function handleSkip() {
-        // Remember this version so we don't prompt again unless a newer one ships.
-        try { localStorage.setItem(`${SKIPPED_KEY_PREFIX}${update.version}`, '1'); }
-        catch { /* private browsing — best effort */ }
-        onSkip();
-    }
-
+    // Later, Download, × and Escape put the prompt off for this session; only
+    // "Skip this version" is remembered (onSkip). The dialog itself takes
+    // focus, not a button, because it appears on its own a few seconds after
+    // launch and a stray Enter must not act on it.
     return (
-        <div className="modal-overlay">
-            <div className="modal update-modal" onClick={(e) => e.stopPropagation()}>
+        // Escape (handled centrally) and a click outside both mean "Later".
+        <div className="modal-overlay" onClick={onLater}>
+            <div className="modal update-modal" data-focus-dialog onClick={(e) => e.stopPropagation()}>
                 <div className="modal-header">
                     <h3>Update available</h3>
                     <button className="modal-close" onClick={onLater} aria-label="Close">×</button>
@@ -59,13 +48,13 @@ export function UpdateAvailableModal({ update, onLater, onSkip }: UpdateAvailabl
                 </div>
 
                 <div className="modal-footer">
-                    <button type="button" className="modal-button" onClick={handleSkip}>
+                    <button type="button" className="modal-button" onClick={onSkip}>
                         Skip this version
                     </button>
                     <button type="button" className="modal-button" onClick={onLater}>
                         Remind me later
                     </button>
-                    <button type="button" className="modal-button primary" onClick={handleDownload} autoFocus>
+                    <button type="button" className="modal-button primary" onClick={handleDownload}>
                         Download
                     </button>
                 </div>

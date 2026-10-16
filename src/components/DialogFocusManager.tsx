@@ -52,9 +52,35 @@ export function DialogFocusManager() {
             }
 
             requestAnimationFrame(() => {
+                // A dialog that opens unprompted asks for focus on itself.
+                if (activeDialog?.hasAttribute('data-focus-dialog')) {
+                    activeDialog.focus();
+                    return;
+                }
                 const preferred = activeDialog?.querySelector<HTMLElement>('[autofocus], input, button');
                 (preferred ?? activeDialog)?.focus();
             });
+        };
+
+        // Escape closes the top dialog the way clicking outside it does, for
+        // dialogs that don't handle Escape themselves. Runs after
+        // the dialog's own handlers: a dialog that used the key (a shortcut
+        // recorder, a Go to Line field that already closed) is left alone.
+        // The top dialog is noted before any handler runs, so a dialog that
+        // closes itself on Escape does not also close the one beneath it.
+        let escapeTarget: HTMLElement | null = null;
+        const noteEscapeTarget = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            const overlays = Array.from(document.querySelectorAll<HTMLElement>('.modal-overlay'));
+            escapeTarget = overlays[overlays.length - 1] ?? null;
+        };
+        const onEscape = (event: KeyboardEvent) => {
+            const overlay = escapeTarget;
+            escapeTarget = null;
+            if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
+            if (!overlay?.isConnected) return;
+            event.preventDefault();
+            overlay.click();
         };
 
         const onKeyDown = (event: KeyboardEvent) => {
@@ -79,10 +105,14 @@ export function DialogFocusManager() {
         const observer = new MutationObserver(synchronize);
         observer.observe(document.body, { childList: true, subtree: true });
         document.addEventListener('keydown', onKeyDown, true);
+        window.addEventListener('keydown', noteEscapeTarget, true);
+        window.addEventListener('keydown', onEscape);
         synchronize();
         return () => {
             observer.disconnect();
             document.removeEventListener('keydown', onKeyDown, true);
+            window.removeEventListener('keydown', noteEscapeTarget, true);
+            window.removeEventListener('keydown', onEscape);
             restoreFocus?.focus();
         };
     }, []);

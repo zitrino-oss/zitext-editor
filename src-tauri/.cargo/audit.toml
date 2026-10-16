@@ -1,11 +1,12 @@
 [advisories]
 # Owner for every temporary exception below: ZITEXT security maintainers.
-# Next mandatory review: 2026-10-01. Remove an exception as soon as its
+# Last reviewed: 2026-10-07. Next mandatory review: 2027-01-07. Remove an exception as soon as its
 # upstream dependency accepts a patched version.
-# RUSTSEC-2026-0097: rand 0.8.5 unsound with custom logger using rand::rng()
-# This is a transitive dependency via: rand → phf_generator → markup5ever →
-# html5ever → tauri-utils → tauri. Cannot be fixed by direct dep update;
-# awaiting upstream Tauri to bump their dependency on rand.
+# RUSTSEC-2026-0097: rand unsound with a custom logger using rand::rng().
+# Rechecked 2026-10-07: the only affected copy is rand 0.7.3, a BUILD-time
+# dependency (selectors → phf_codegen → phf_generator) of Tauri's HTML parser;
+# the patched 0.8.6 is compile-time too (phf_macros) and the app ships the
+# patched 0.10. Remove once upstream drops 0.7.
 #
 # RUSTSEC-2026-0194 / RUSTSEC-2026-0195: quick-xml < 0.41 XML-parsing DoS
 # advisories (quadratic duplicate-attribute check; unbounded namespace-decl

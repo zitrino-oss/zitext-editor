@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getLanguageDisplayName } from '../utils/languageDetection';
-import { calculateTextStats, formatFileSize, formatNumber } from '../utils/textStats';
+import { calculateTextStats, encodedByteLength, formatFileSize, formatNumber } from '../utils/textStats';
 import { languageBadge } from '../utils/languageBadges';
+import { useLiveCursor } from '../utils/liveCursor';
 
 interface StatusBarProps {
+    /** The focused tab: its live cursor position is shown (see liveCursor). */
+    tabId: string;
+    /** Its last settled position, shown until the editor reports a move. */
     line: number;
     column: number;
     language: string;
     encoding: string;
-    eol: 'LF' | 'CRLF';
-    fileSize?: number;
+    eol: 'LF' | 'CRLF' | 'Mixed';
+    /** The buffer; its counts and saved size settle after typing pauses. */
     content?: string;
     selectionLength?: number;
     fontSize: number;
@@ -21,12 +25,12 @@ interface StatusBarProps {
 }
 
 export function StatusBar({
-    line,
-    column,
+    tabId,
+    line: settledLine,
+    column: settledColumn,
     language,
     encoding,
     eol,
-    fileSize,
     content,
     selectionLength,
     fontSize,
@@ -36,6 +40,7 @@ export function StatusBar({
     onToggleMinimap,
     onChangeLanguage,
 }: StatusBarProps) {
+    const { line, column } = useLiveCursor(tabId, { line: settledLine, column: settledColumn });
     const [statsContent, setStatsContent] = useState(content);
     useEffect(() => {
         if (content === undefined) {
@@ -52,6 +57,10 @@ export function StatusBar({
         () => statsContent ? calculateTextStats(statsContent) : null,
         [statsContent],
     );
+    const fileSize = useMemo(
+        () => statsContent ? encodedByteLength(statsContent, encoding) : 0,
+        [statsContent, encoding],
+    );
 
     return (
         <div className="status-bar">
@@ -59,6 +68,7 @@ export function StatusBar({
                 <button
                     className="status-badge"
                     title="Select language mode"
+                    aria-label="Select language mode"
                     onClick={onChangeLanguage}
                 >
                     <span
@@ -74,7 +84,7 @@ export function StatusBar({
                 <span className="status-item" title="Encoding">
                     {encoding}
                 </span>
-                {fileSize !== undefined && fileSize > 0 && (
+                {fileSize > 0 && (
                     <span className="status-item" title="File Size">
                         {formatFileSize(fileSize)}
                     </span>
@@ -110,9 +120,9 @@ export function StatusBar({
                     </span>
                 )}
                 <div className="status-zoom-modern" title="Font Size">
-                    <button className="status-zoom-pill" onClick={onZoomOut} title="Decrease font size">−</button>
+                    <button className="status-zoom-pill" onClick={onZoomOut} title="Decrease font size" aria-label="Decrease font size">−</button>
                     <span className="status-zoom-val">{fontSize}px</span>
-                    <button className="status-zoom-pill" onClick={onZoomIn} title="Increase font size">+</button>
+                    <button className="status-zoom-pill" onClick={onZoomIn} title="Increase font size" aria-label="Increase font size">+</button>
                 </div>
             </div>
         </div>

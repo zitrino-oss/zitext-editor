@@ -8,11 +8,17 @@ export interface Tab {
   cursorColumn: number;
   isDirty: boolean;
   language: string;
+  /** Changes whenever the editor should scroll the cursor into view (search
+   *  result, Go to Line), even when the line itself did not change. */
+  revealRequest?: number;
+  /** The user picked the language; content detection leaves it alone. */
+  languageLocked?: boolean;
   isReadOnly: boolean;
   encoding: string;
   /** Last disk snapshot used for optimistic overwrite protection. */
   diskVersion: DiskVersion | null;
-  eol: 'LF' | 'CRLF';
+  /** Mixed until the document is edited (the editor then keeps one style). */
+  eol: 'LF' | 'CRLF' | 'Mixed';
   // Scroll position, title, and tab state
   scrollTop: number;
   scrollLeft: number;
@@ -48,7 +54,6 @@ export interface Settings {
   showMinimap: boolean;
   editorTheme: string;
   keybindings: Record<string, string>;
-  sortJsonKeys: boolean;
   openedFolder: string | null;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
@@ -79,6 +84,10 @@ export interface SessionFile {
   // active_tab_path being exposed via the (redacted) read_settings.
   is_active?: boolean;
   content?: string;
+  // For a dirty saved file: the on-disk version its unsaved edits were based
+  // on. Restore treats a different current version as a conflict instead of
+  // silently making the recovered buffer overwrite it.
+  base_version?: DiskVersion;
 }
 
 export interface EditorState {
@@ -112,6 +121,8 @@ export interface FileNode {
   modified?: number;
   children?: FileNode[];
   expanded?: boolean;
+  /** An informational row (e.g. "only the first 5,000 items are shown"). */
+  placeholder?: boolean;
 }
 
 export interface KeybindingConfig {

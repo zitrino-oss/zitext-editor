@@ -36,6 +36,27 @@ export function calculateTextStats(
 }
 
 /**
+ * Size of the text once saved in the tab's encoding, in bytes. JavaScript
+ * string length counts UTF-16 code units, which is neither: "é" is one unit
+ * but two UTF-8 bytes, and an emoji is two units but four bytes.
+ */
+export function encodedByteLength(text: string, encoding = 'UTF-8'): number {
+    // Windows-1252 stores one byte per character.
+    if (encoding.toLowerCase() === 'windows-1252') return text.length;
+    let bytes = 0;
+    for (let i = 0; i < text.length; i++) {
+        const unit = text.charCodeAt(i);
+        if (unit < 0x80) bytes += 1;
+        else if (unit < 0x800) bytes += 2;
+        else if (unit >= 0xd800 && unit <= 0xdbff && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+            bytes += 4; // a surrogate pair is one 4-byte character
+            i++;
+        } else bytes += 3; // includes a lone surrogate, saved as U+FFFD
+    }
+    return encoding.toLowerCase() === 'utf-8 with bom' ? bytes + 3 : bytes;
+}
+
+/**
  * Format file size in human-readable format
  */
 export function formatFileSize(bytes: number): string {

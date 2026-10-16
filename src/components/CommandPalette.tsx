@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { isImeComposing } from '../utils/shortcuts';
 
 interface Command {
     id: string;
@@ -12,9 +13,11 @@ interface CommandPaletteProps {
     isOpen: boolean;
     onClose: () => void;
     commands: Command[];
+    /** Text the search starts with (e.g. "Change Language Mode" from the status bar). */
+    initialQuery?: string;
 }
 
-export function CommandPalette({ isOpen, onClose, commands }: CommandPaletteProps) {
+export function CommandPalette({ isOpen, onClose, commands, initialQuery = '' }: CommandPaletteProps) {
     const [search, setSearch] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
     const listRef = useRef<HTMLDivElement>(null);
@@ -25,16 +28,23 @@ export function CommandPalette({ isOpen, onClose, commands }: CommandPaletteProp
         cmd.category.toLowerCase().includes(search.toLowerCase())
     );
 
+    // A new query means a new result list: start from its first entry.
+    // Keeping the old index (only clamped) made Enter run a different command
+    // than the best match, e.g. "Save As" after typing "save".
+    useEffect(() => {
+        setSelectedIndex(0);
+    }, [search]);
+
     useEffect(() => {
         setSelectedIndex(prev => Math.min(prev, Math.max(0, filteredCommands.length - 1)));
     }, [filteredCommands.length]);
 
     useEffect(() => {
         if (isOpen) {
-            setSearch('');
+            setSearch(initialQuery);
             setSelectedIndex(0);
         }
-    }, [isOpen]);
+    }, [isOpen, initialQuery]);
 
     // Scroll selected item into view
     useEffect(() => {
@@ -45,6 +55,7 @@ export function CommandPalette({ isOpen, onClose, commands }: CommandPaletteProp
     }, [selectedIndex]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (isImeComposing(e)) return; // Enter commits the IME composition
         if (e.key === 'Escape') {
             onClose();
         } else if (e.key === 'ArrowDown') {

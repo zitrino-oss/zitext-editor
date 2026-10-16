@@ -2,7 +2,7 @@
  * XML and YAML Formatting Tools
  */
 
-import { parseDocument } from 'yaml';
+import { parseDocument, visit, type Document } from 'yaml';
 
 // Guards against pathological input freezing the UI thread during formatting.
 const MAX_FORMAT_INPUT_CHARS = 20_000_000; // ~20M characters
@@ -109,6 +109,10 @@ function xmlSemanticSignature(node: Node): unknown {
 /**
  * Format XML with proper indentation
  */
+/** Stands in for the "&" of a reference while the document is re-serialized. */
+const REFERENCE_MARK = '\uE000';
+const XML_REFERENCE = /&(?=#[0-9]+;|#x[0-9a-fA-F]+;|[A-Za-z_][\w.-]*;)/g;
+
 export function formatXml(text: string, indent: number = 2): string {
     if (text.length > MAX_FORMAT_INPUT_CHARS) {
         throw new Error('XML input is too large to format.');
@@ -118,8 +122,13 @@ export function formatXml(text: string, indent: number = 2): string {
             throw new Error('XML documents with an internal DTD subset are left unchanged because browser serialization cannot preserve that subset safely');
         }
         const declaration = /^\uFEFF?\s*(<\?xml(?=\s|\?>)[\s\S]*?\?>)/i.exec(text)?.[1];
-        const documentNode = parseXmlDocument(text);
-        const originalSignature = JSON.stringify(xmlSemanticSignature(documentNode));
+        const originalSignature = JSON.stringify(xmlSemanticSignature(parseXmlDocument(text)));
+        // Entity and character references (&quot;, &#169;, &#xA9; ...) are
+        // kept as written: the serializer would otherwise turn them into the
+        // characters they stand for. Their "&" travels through the round trip
+        // as a private-use character, which is then put back.
+        const protect = !text.includes(REFERENCE_MARK);
+        const documentNode = parseXmlDocument(protect ? text.replace(XML_REFERENCE, REFERENCE_MARK) : text);
 
         const indentText = ' '.repeat(Math.max(1, indent));
         const formatElement = (element: Element, depth: number): void => {
@@ -157,8 +166,15 @@ export function formatXml(text: string, indent: number = 2): string {
 
         const root = documentNode.documentElement;
         formatElement(root, 0);
-        const serialized = new XMLSerializer().serializeToString(documentNode).trim();
-        const output = declaration ? `${declaration}\n${serialized}` : serialized;
+        // One line per top-level node: comments and processing instructions
+        // before the root used to be joined onto the root element's line.
+        const serializer = new XMLSerializer();
+        const serialized = Array.from(documentNode.childNodes)
+            .map(node => serializer.serializeToString(node).trim())
+            .filter(Boolean)
+            .join('\n');
+        const restored = protect ? serialized.split(REFERENCE_MARK).join('&') : serialized;
+        const output = declaration ? `${declaration}\n${restored}` : restored;
         const outputSignature = JSON.stringify(xmlSemanticSignature(parseXmlDocument(output)));
         if (outputSignature !== originalSignature) {
             throw new Error('Formatter round-trip changed the XML document semantics');
@@ -169,26 +185,64 @@ export function formatXml(text: string, indent: number = 2): string {
     }
 }
 
+const YAML_PARSE_OPTIONS = { intAsBigInt: true } as const;
+
+/** Source spans of plain scalars that are not strings (numbers, booleans,
+ *  null): the values whose spelling a serializer may change. */
+function plainValueSpans(doc: Document.Parsed): [number, number][] {
+    const spans: [number, number][] = [];
+    visit(doc, {
+        Scalar(_key, node) {
+            if (node.type === 'PLAIN' && typeof node.value !== 'string' && node.range) {
+                spans.push([node.range[0], node.range[1]]);
+            }
+        },
+    });
+    return spans;
+}
+
 /**
  * Format YAML with proper indentation.
  *
  * Uses the `yaml` package's document model, which round-trips comments and
- * normalizes indentation/spacing without altering the document's structure or
- * values. This replaces the previous hand-rolled line reformatter, which could
- * silently corrupt valid YAML (e.g. treating `#` inside a quoted value as a
- * comment, or splitting on a `:` inside a quoted string).
+ * normalizes indentation/spacing without altering the document's structure.
+ *
+ * Values are kept exactly as written. The serializer would otherwise rewrite
+ * them: `0755` became `755` (a different number to YAML 1.1 tools such as
+ * Ansible and PyYAML), big integers lost precision, `0x1F` became `0x1f` and
+ * long values were folded. Integers are parsed as BigInt, lines are never
+ * folded, and every number/boolean/null is restored to its original spelling.
+ * If that cannot be done safely, formatting is refused and the document is
+ * left unchanged.
  */
 export function formatYaml(text: string, indent: number = 2): string {
     if (text.length > MAX_FORMAT_INPUT_CHARS) {
         throw new Error('YAML input is too large to format.');
     }
     try {
-        const doc = parseDocument(text);
+        const doc = parseDocument(text, YAML_PARSE_OPTIONS);
         // Surface genuine syntax errors rather than emitting partial output.
         if (doc.errors.length > 0) {
             throw new Error(doc.errors[0].message);
         }
-        return doc.toString({ indent }).trimEnd();
+        const originals = plainValueSpans(doc).map(([start, end]) => text.slice(start, end));
+
+        let out = doc.toString({ indent, lineWidth: 0 });
+        const formattedSpans = plainValueSpans(parseDocument(out, YAML_PARSE_OPTIONS));
+        if (formattedSpans.length !== originals.length) {
+            throw new Error('formatting would change some values, so the document was left unchanged');
+        }
+        for (let i = formattedSpans.length - 1; i >= 0; i--) {
+            const [start, end] = formattedSpans[i];
+            out = out.slice(0, start) + originals[i] + out.slice(end);
+        }
+
+        const check = parseDocument(out, YAML_PARSE_OPTIONS);
+        const kept = plainValueSpans(check).map(([start, end]) => out.slice(start, end));
+        if (check.errors.length > 0 || kept.join('\u0000') !== originals.join('\u0000')) {
+            throw new Error('formatting would change some values, so the document was left unchanged');
+        }
+        return out.trimEnd();
     } catch (error) {
         throw new Error(`Failed to format YAML: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }

@@ -19,6 +19,7 @@ let currentSessionId: string | null = null;
 let errorCounter = 0;
 
 export function startSession(): void {
+    errorCounter = 0;
     currentSessionId = `sess_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     const record: SessionRecord = {
         id: currentSessionId,
@@ -61,7 +62,8 @@ export interface SessionHealthSummary {
 export function getHealthSummary(): SessionHealthSummary {
     const log = getLog();
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    const recent = log.filter(s => s.start >= thirtyDaysAgo);
+    // The running session has no end yet; it is not a crash.
+    const recent = log.filter(s => s.start >= thirtyDaysAgo && s.id !== currentSessionId);
 
     const total = recent.length;
     const crashed = recent.filter(s => s.end === null).length;
@@ -80,10 +82,21 @@ export function getHealthSummary(): SessionHealthSummary {
     };
 }
 
+function isSessionRecord(value: unknown): value is SessionRecord {
+    if (!value || typeof value !== 'object') return false;
+    const record = value as Record<string, unknown>;
+    return typeof record.id === 'string'
+        && typeof record.start === 'number'
+        && (record.end === null || typeof record.end === 'number')
+        && typeof record.fileCount === 'number'
+        && typeof record.errorCount === 'number';
+}
+
 function getLog(): SessionRecord[] {
     try {
         const raw = localStorage.getItem(SESSIONS_KEY);
-        return raw ? JSON.parse(raw) : [];
+        const parsed: unknown = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed.filter(isSessionRecord) : [];
     } catch {
         return [];
     }

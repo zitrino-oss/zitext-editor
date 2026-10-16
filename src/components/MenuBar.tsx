@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import { getShortcutDisplay, isMac, isWindows } from '../utils/shortcuts';
+import { getShortcutDisplay, isLinux, isWindows } from '../utils/shortcuts';
 import { WindowControls } from './WindowControls';
 import type { Settings } from '../types';
 import { getDirectEnabledMenuItems, openKeyboardSubmenu } from './menuNavigation';
 import { languageBadge } from '../utils/languageBadges';
+import { LANGUAGE_GROUPS, LANGUAGES } from '../utils/languages';
+import { TEXT_TOOLS, type TextToolId, type TextToolInfo } from '../utils/textToolList';
+
+const TOOL_GROUPS: { group: TextToolInfo['group']; label: string }[] = [
+    { group: 'Lines', label: 'Lines' },
+    { group: 'Case', label: 'Case' },
+    { group: 'Encode', label: 'Encode / Decode' },
+    { group: 'Generate', label: 'Generate and Checksums' },
+    { group: 'Convert', label: 'Convert' },
+];
 
 function LanguageOption({ id, label, current, onPick }: {
     id: string;
@@ -40,6 +50,20 @@ interface MenuBarProps {
     onSave: () => void;
     onSaveAs: () => void;
     onClose: () => void;
+    onOpenLargeFile: () => void;
+    onCompareWithFile: () => void;
+    onCompareWithClipboard: () => void;
+    onCompareWithSaved: () => void;
+    onCompareWithTab: () => void;
+    onOpenScratchpad: () => void;
+    onTextTool: (id: TextToolId) => void;
+    onMarkSelection: () => void;
+    onMarkFind: () => void;
+    onMarkText: () => void;
+    onMarkRegex: () => void;
+    onNextMark: () => void;
+    onPreviousMark: () => void;
+    onClearMarks: () => void;
     onRevertFile: () => void;
     onUndo: () => void;
     onRedo: () => void;
@@ -73,6 +97,11 @@ interface MenuBarProps {
     onOpenRecent: (path: string) => void;
     settings: Settings;
     hasActiveTab: boolean;
+    /** A Large File / Log, Compare or Scratchpad view on screen: Save, Close,
+     *  Find and Go to Line go to it, and the edit commands to its editor. */
+    shownViewKind?: 'log' | 'compare' | 'scratchpad' | null;
+    /** The focused tab is Markdown, so it has a preview. */
+    canPreview: boolean;
     isReadOnly: boolean;
     isPreview: boolean;
     activeTabPath: string | null;
@@ -92,6 +121,20 @@ export function MenuBar({
     onSave,
     onSaveAs,
     onClose,
+    onOpenLargeFile,
+    onCompareWithFile,
+    onCompareWithClipboard,
+    onCompareWithSaved,
+    onCompareWithTab,
+    onOpenScratchpad,
+    onTextTool,
+    onMarkSelection,
+    onMarkFind,
+    onMarkText,
+    onMarkRegex,
+    onNextMark,
+    onPreviousMark,
+    onClearMarks,
     onRevertFile,
     onUndo,
     onRedo,
@@ -124,8 +167,10 @@ export function MenuBar({
     onOpenRecent,
     settings,
     hasActiveTab,
+    shownViewKind = null,
     isReadOnly,
     isPreview,
+    canPreview,
     activeTabPath,
     splitViewEnabled,
     hasRightPane,
@@ -142,7 +187,10 @@ export function MenuBar({
 
     // Editor commands need a mounted Monaco instance — Markdown preview unmounts
     // it — and the mutating ones additionally need a writable buffer.
-    const canEdit = hasActiveTab && !isPreview;
+    const viewHasEditor = shownViewKind === 'compare' || shownViewKind === 'scratchpad';
+    const canEdit = (hasActiveTab && !isPreview) || viewHasEditor;
+    // Save, Close, Find and Go to Line also work on a view.
+    const canRoute = hasActiveTab || shownViewKind !== null;
     const canWrite = canEdit && !isReadOnly;
 
     useEffect(() => {
@@ -295,8 +343,11 @@ export function MenuBar({
                                 <div className="menu-option" onClick={() => { onOpenFolder(); closeMenu(); }}>
                                     Open Folder... <span className="shortcut">{getShortcutDisplay('K')}</span>
                                 </div>
+                                <div className="menu-option" onClick={() => { onOpenLargeFile(); closeMenu(); }}>
+                                    Open Large File or Log...
+                                </div>
                                 <div className="menu-divider" />
-                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onSave(); closeMenu(); } }}>
+                                <div className={`menu-option ${!canRoute ? 'disabled' : ''}`} onClick={() => { if (canRoute) { onSave(); closeMenu(); } }}>
                                     Save <span className="shortcut">{getShortcutDisplay('S')}</span>
                                 </div>
                                 <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onSaveAs(); closeMenu(); } }}>
@@ -304,6 +355,17 @@ export function MenuBar({
                                 </div>
                                 <div className={`menu-option ${!hasSavedPath ? 'disabled' : ''}`} onClick={() => { if (hasSavedPath) { onRevertFile(); closeMenu(); } }}>
                                     Revert File
+                                </div>
+                                <div className={`menu-submenu ${!hasActiveTab ? 'disabled' : ''}`}>
+                                    Compare
+                                    {hasActiveTab && (
+                                        <div className="menu-dropdown-nested">
+                                            <div className="menu-option" onClick={() => { onCompareWithFile(); closeMenu(); }}>With File...</div>
+                                            <div className="menu-option" onClick={() => { onCompareWithTab(); closeMenu(); }}>With Open Tab...</div>
+                                            <div className="menu-option" onClick={() => { onCompareWithClipboard(); closeMenu(); }}>With Clipboard</div>
+                                            <div className={`menu-option ${!hasSavedPath ? 'disabled' : ''}`} onClick={() => { if (hasSavedPath) { onCompareWithSaved(); closeMenu(); } }}>With Saved Version</div>
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="menu-divider" />
                                 {recentFiles.length > 0 && (
@@ -321,7 +383,7 @@ export function MenuBar({
                                         <div className="menu-divider" />
                                     </>
                                 )}
-                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onClose(); closeMenu(); } }}>
+                                <div className={`menu-option ${!canRoute ? 'disabled' : ''}`} onClick={() => { if (canRoute) { onClose(); closeMenu(); } }}>
                                     Close Tab <span className="shortcut">{getShortcutDisplay('W')}</span>
                                 </div>
                             </div>
@@ -356,16 +418,16 @@ export function MenuBar({
                                     Select All <span className="shortcut">{getShortcutDisplay('A')}</span>
                                 </div>
                                 <div className="menu-divider" />
-                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onFind(); closeMenu(); } }}>
+                                <div className={`menu-option ${!canRoute ? 'disabled' : ''}`} onClick={() => { if (canRoute) { onFind(); closeMenu(); } }}>
                                     Find... <span className="shortcut">{getShortcutDisplay('F')}</span>
                                 </div>
-                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onReplace(); closeMenu(); } }}>
+                                <div className={`menu-option ${!canRoute ? 'disabled' : ''}`} onClick={() => { if (canRoute) { onReplace(); closeMenu(); } }}>
                                     Find &amp; Replace... <span className="shortcut">{getShortcutDisplay('H')}</span>
                                 </div>
                                 <div className="menu-option" onClick={() => { onFindInFiles(); closeMenu(); }}>
                                     Find in Files... <span className="shortcut">{getShortcutDisplay('F', true, true)}</span>
                                 </div>
-                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onGoToLine(); closeMenu(); } }}>
+                                <div className={`menu-option ${!canRoute ? 'disabled' : ''}`} onClick={() => { if (canRoute) { onGoToLine(); closeMenu(); } }}>
                                     Go to Line... <span className="shortcut">{getShortcutDisplay('G')}</span>
                                 </div>
                                 <div className="menu-divider" />
@@ -373,7 +435,8 @@ export function MenuBar({
                                     Toggle Line Comment <span className="shortcut">{getShortcutDisplay('/')}</span>
                                 </div>
                                 <div className={`menu-option ${!canWrite ? 'disabled' : ''}`} onClick={() => { if (canWrite) { onFormatDocument(); closeMenu(); } }}>
-                                    Format Document <span className="shortcut">{isMac ? '⇧⌥F' : 'Shift+Alt+F'}</span>
+                                    {/* Monaco's own binding: Ctrl+Shift+I on Linux. (This menu bar is not shown on macOS.) */}
+                                    Format Document <span className="shortcut">{isLinux ? 'Ctrl+Shift+I' : 'Shift+Alt+F'}</span>
                                 </div>
                             </div>
                         )}
@@ -402,7 +465,7 @@ export function MenuBar({
                                 <div className="menu-option" onClick={() => { onToggleExplorer(); closeMenu(); }}>
                                     Toggle Explorer
                                 </div>
-                                <div className={`menu-option ${!hasActiveTab ? 'disabled' : ''}`} onClick={() => { if (hasActiveTab) { onTogglePreview(); closeMenu(); } }}>
+                                <div className={`menu-option ${!canPreview && !isPreview ? 'disabled' : ''}`} onClick={() => { if (canPreview || isPreview) { onTogglePreview(); closeMenu(); } }}>
                                     {isPreview ? '✓ Toggle Markdown Preview' : 'Toggle Markdown Preview'} <span className="shortcut">{getShortcutDisplay('V', true, true)}</span>
                                 </div>
                                 <div className="menu-option" onClick={() => { onToggleSplitView(); closeMenu(); }}>
@@ -443,52 +506,64 @@ export function MenuBar({
                         )}
                     </div>
 
+                    {/* Tools Menu */}
+                    <div className="menu-item" onClick={() => handleMenuClick('tools')}>
+                        Tools
+                        {activeMenu === 'tools' && (
+                            <div className="menu-dropdown" onMouseLeave={closeMenu}>
+                                <div className="menu-option" onClick={() => { onOpenScratchpad(); closeMenu(); }}>
+                                    Open Scratchpad <span className="shortcut">{getShortcutDisplay('N', true, true)}</span>
+                                </div>
+                                <div className="menu-divider" />
+                                <div className="menu-group-label">Text and Data Tools</div>
+                                {TOOL_GROUPS.map(({ group, label }) => (
+                                    <div className="menu-submenu" key={group}>
+                                        <span>{label}</span>
+                                        <div className="menu-dropdown-nested">
+                                            {TEXT_TOOLS.filter(tool => tool.group === group).map(tool => (
+                                                <div key={tool.id} className="menu-option" title={tool.description}
+                                                    onClick={() => { onTextTool(tool.id); closeMenu(); }}>
+                                                    {tool.label}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                                <div className="menu-divider" />
+                                <div className="menu-group-label">Marks</div>
+                                <div className="menu-option" onClick={() => { onMarkSelection(); closeMenu(); }}>
+                                    Mark Selection <span className="shortcut">{getShortcutDisplay('M', true, true)}</span>
+                                </div>
+                                <div className="menu-option" onClick={() => { onMarkFind(); closeMenu(); }}>Mark Find Matches</div>
+                                <div className="menu-option" onClick={() => { onMarkText(); closeMenu(); }}>Mark Text...</div>
+                                <div className="menu-option" onClick={() => { onMarkRegex(); closeMenu(); }}>Mark Regular Expression...</div>
+                                <div className="menu-option" onClick={() => { onNextMark(); closeMenu(); }}>
+                                    Next Marked <span className="shortcut">F4</span>
+                                </div>
+                                <div className="menu-option" onClick={() => { onPreviousMark(); closeMenu(); }}>
+                                    Previous Marked <span className="shortcut">Shift+F4</span>
+                                </div>
+                                <div className="menu-option" onClick={() => { onClearMarks(); closeMenu(); }}>Clear All Marks</div>
+                            </div>
+                        )}
+                    </div>
+
                     {/* Language Menu */}
                     <div className="menu-item" onClick={() => handleMenuClick('language')}>
                         Language
                         {activeMenu === 'language' && (
                             <div className="menu-dropdown" onMouseLeave={closeMenu}>
-                                <div className="menu-group-label">60+ Modes</div>
-                                <div className="menu-submenu">
-                                    <span>Web and Markup</span>
-                                    <div className="menu-dropdown-nested">
-                                        {[['html','HTML'],['css','CSS'],['javascript','JavaScript'],['typescript','TypeScript'],['php','PHP'],['scss','SCSS'],['sass','Sass'],['less','Less'],['coffeescript','CoffeeScript'],['handlebars','Handlebars'],['pug','Pug'],['razor','Razor'],['twig','Twig'],['markdown','Markdown']].map(([id, label]) => (
-                                            <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
-                                        ))}
+                                <div className="menu-group-label">{LANGUAGES.length} Modes</div>
+                                {LANGUAGE_GROUPS.map(group => (
+                                    <div className="menu-submenu" key={group.id}>
+                                        <span>{group.label}</span>
+                                        <div className="menu-dropdown-nested">
+                                            {LANGUAGES.filter(language => language.group === group.id).map(({ id, label }) => (
+                                                <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
+                                            ))}
+                                        </div>
                                     </div>
-                                </div>
-                                <div className="menu-submenu">
-                                    <span>General Programming</span>
-                                    <div className="menu-dropdown-nested">
-                                        {[['python','Python'],['java','Java'],['csharp','C#'],['go','Go'],['ruby','Ruby'],['swift','Swift'],['kotlin','Kotlin'],['dart','Dart'],['elixir','Elixir'],['clojure','Clojure'],['groovy','Groovy'],['haskell','Haskell'],['julia','Julia'],['lua','Lua'],['perl','Perl'],['r','R'],['scala','Scala'],['scheme','Scheme'],['fsharp','F#']].map(([id, label]) => (
-                                            <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
-                                        ))}
-                                    </div>
-                                </div>
-                                <div className="menu-submenu">
-                                    <span>Systems and Engineering</span>
-                                    <div className="menu-dropdown-nested">
-                                        {[['c','C'],['cpp','C++'],['rust','Rust'],['objective-c','Objective-C'],['fortran','Fortran'],['pascal','Pascal'],['ocaml','OCaml'],['verilog','Verilog'],['vhdl','VHDL'],['solidity','Solidity']].map(([id, label]) => (
-                                            <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
-                                        ))}
-                                    </div>
-                                </div>
-                                <div className="menu-submenu">
-                                    <span>Data and Config</span>
-                                    <div className="menu-dropdown-nested">
-                                        {[['json','JSON'],['xml','XML'],['yaml','YAML'],['toml','TOML'],['ini','INI'],['sql','SQL'],['graphql','GraphQL'],['redis','Redis']].map(([id, label]) => (
-                                            <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
-                                        ))}
-                                    </div>
-                                </div>
-                                <div className="menu-submenu">
-                                    <span>Scripts and Build</span>
-                                    <div className="menu-dropdown-nested">
-                                        {[['shell','Shell'],['powershell','PowerShell'],['bat','Batch'],['dockerfile','Dockerfile'],['makefile','Makefile'],['latex','LaTeX'],['plaintext','Plain Text']].map(([id, label]) => (
-                                            <LanguageOption key={id} id={id} label={label} current={currentLanguage} onPick={(lang) => { onChangeLanguage(lang); closeMenu(); }} />
-                                        ))}
-                                    </div>
-                                </div>
+                                ))}
                             </div>
                         )}
                     </div>

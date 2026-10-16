@@ -5,6 +5,10 @@
  * toast notification system.
  */
 
+/** Removes "ZITEXT_SOMETHING: " codes from a message shown to the user. */
+export function withoutErrorCodes(text: string): string {
+    return text.replace(/\bZITEXT_[A-Z_]+:\s*/g, '');
+}
 import {
     TOAST_ERROR_DURATION_MS,
     TOAST_WARNING_DURATION_MS,
@@ -93,6 +97,10 @@ class ErrorService {
      * Add a new toast
      */
     private addToast(type: ToastType, message: string, duration: number, detail?: string, detailMono = false): void {
+        // Backend errors start with machine-readable codes (ZITEXT_PARENT_MISSING:
+        // and the like) that callers match on; they are not for people.
+        message = withoutErrorCodes(message);
+        detail = detail === undefined ? undefined : withoutErrorCodes(detail);
         const id = `toast-${++this.toastCounter}-${Date.now()}`;
         const toast: Toast = { id, type, message, detail, detailMono, duration };
 

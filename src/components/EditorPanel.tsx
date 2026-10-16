@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback, useState } from 'react';
 import Editor, { Monaco } from '@monaco-editor/react';
 import { editor } from 'monaco-editor';
 import { copySelection, cutSelection, pasteFromClipboard } from '../utils/editorCommands';
+import { isMac } from '../utils/shortcuts';
 import '../monaco-config'; // Configure Monaco workers
 
 interface EditorPanelProps {
@@ -23,8 +24,17 @@ interface EditorPanelProps {
     scrollLeft: number;
     /** Custom keybinding string for Find (e.g. "Ctrl+F"). If omitted, uses Ctrl/Cmd+F. */
     findKeybinding?: string;
-    /** Custom keybinding string for Find & Replace (e.g. "Ctrl+H"). If omitted, uses Ctrl/Cmd+H. */
+    /** Custom keybinding string for Find & Replace (e.g. "Ctrl+H"). If omitted, uses Ctrl+H (Cmd+Option+F on macOS). */
     replaceKeybinding?: string;
+    /** JSON with comments (tsconfig.json, .vscode/*.json, *.jsonc): comments
+     *  and trailing commas are not errors. */
+    allowJsonComments?: boolean;
+    /** The pane whose document decides how JSON is validated (Monaco's JSON
+     *  settings are global). False for the inactive split pane. */
+    isActivePane?: boolean;
+    /** A new value moves the cursor to cursorLine/cursorColumn and scrolls it
+     *  into view, after any scroll restore (including on first mount). */
+    revealRequest?: number;
     onChange: (value: string) => void;
     onCursorChange: (line: number, column: number) => void;
     onScrollChange?: (scrollTop: number, scrollLeft: number) => void;
@@ -115,6 +125,27 @@ function parseMonacoKey(binding: string, monaco: Monaco): number | null {
     return hasKey ? result : null;
 }
 
+/** The last reveal request applied to each document (see the effect). */
+const appliedReveals = new Map<string, number>();
+
+/**
+ * JSON validation settings are global in Monaco, so the focused editor sets
+ * them for its document: JSON with comments tolerates comments and trailing
+ * commas, plain JSON reports them.
+ */
+function applyJsonDiagnostics(monaco: Monaco, allowComments: boolean): void {
+    monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+        validate: true,
+        allowComments,
+        comments: allowComments ? 'ignore' : 'error',
+        trailingCommas: allowComments ? 'ignore' : 'error',
+        schemas: [],
+        // Never fetch a document's "$schema" URL: an untrusted file must not
+        // be able to make the editor send network requests.
+        enableSchemaRequest: false,
+    });
+}
+
 export function EditorPanel({
     modelPath,
     content,
@@ -134,6 +165,9 @@ export function EditorPanel({
     scrollLeft,
     findKeybinding,
     replaceKeybinding,
+    allowJsonComments,
+    isActivePane = true,
+    revealRequest,
     onChange,
     onCursorChange,
     onScrollChange,
@@ -159,6 +193,8 @@ export function EditorPanel({
     onSelectionChangeRef.current = onSelectionChange;
     onEditorReadyRef.current = onEditorReady;
     onFocusRef.current = onFocus;
+    const allowJsonCommentsRef = useRef(allowJsonComments ?? false);
+    allowJsonCommentsRef.current = allowJsonComments ?? false;
 
     // True while the user is holding the mouse button inside the editor.
     // The cursor-sync useEffect checks this flag and skips setPosition() while a drag is
@@ -250,7 +286,10 @@ export function EditorPanel({
         const monaco = monacoRef.current;
 
         const defaultFindKey = monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF;
-        const defaultReplaceKey = monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyH;
+        // macOS: Cmd+H hides the app, so Replace is Cmd+Option+F (Monaco's own default there).
+        const defaultReplaceKey = isMac
+            ? monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyF
+            : monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyH;
 
         const newFindKey = findKeybinding
             ? (parseMonacoKey(findKeybinding, monaco) ?? defaultFindKey)
@@ -313,6 +352,22 @@ export function EditorPanel({
         editorRef.current.setScrollPosition({ scrollTop, scrollLeft });
     }, [modelPath, scrollTop, scrollLeft]);
 
+    // Declared after the scroll restore so it wins when both run in one commit
+    // (opening a search result used to scroll back to the top). Waits for the
+    // editor to mount, so a just-opened document is revealed too.
+    // Each request is applied once per document, not once per editor view:
+    // the view remounts on preview and split toggles, and replaying an old
+    // request there jumped away from where the user had scrolled.
+    useEffect(() => {
+        const ed = editorRef.current;
+        if (!isEditorReady || !ed || revealRequest === undefined) return;
+        if (revealRequest <= (appliedReveals.get(modelPath) ?? 0)) return;
+        appliedReveals.set(modelPath, revealRequest);
+        ed.setPosition({ lineNumber: cursorLine, column: cursorColumn });
+        ed.revealPositionInCenter({ lineNumber: cursorLine, column: cursorColumn }, editor.ScrollType.Immediate);
+        ed.focus();
+    }, [isEditorReady, revealRequest, cursorLine, cursorColumn, modelPath]);
+
     // Monaco is disposed when this unmounts (toggling Markdown preview does
     // exactly that). Publish null so consumers stop treating the dead instance
     // as a live editor — Find checks this to decide whether to search the
@@ -322,14 +377,16 @@ export function EditorPanel({
         onEditorReadyRef.current?.(null);
     }, []);
 
+    // The active pane re-applies when it gets another document (tab switch,
+    // rename) or becomes active, without needing keyboard focus.
+    useEffect(() => {
+        const monaco = monacoRef.current;
+        if (monaco && isEditorReady && isActivePane) applyJsonDiagnostics(monaco, allowJsonComments ?? false);
+    }, [allowJsonComments, isActivePane, isEditorReady, modelPath]);
+
     const handleEditorWillMount = (monaco: Monaco) => {
         monacoRef.current = monaco;
-        monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
-            validate: true,
-            allowComments: false,
-            schemas: [],
-            enableSchemaRequest: true,
-        });
+        if (isActivePane) applyJsonDiagnostics(monaco, allowJsonComments ?? false);
         monaco.languages.typescript.javascriptDefaults.setEagerModelSync(true);
         monaco.languages.typescript.typescriptDefaults.setEagerModelSync(true);
     };
@@ -372,15 +429,18 @@ export function EditorPanel({
             });
         }
 
-        // Track focus
-        editor.onDidFocusEditorText(() => onFocusRef.current?.());
+        // Track focus; the focused document decides how JSON is validated.
+        editor.onDidFocusEditorText(() => {
+            applyJsonDiagnostics(monaco, allowJsonCommentsRef.current);
+            onFocusRef.current?.();
+        });
 
         onEditorReadyRef.current?.(editor);
 
         // Route clipboard actions through the Tauri clipboard plugin. Monaco's built-in
         // context-menu Copy/Cut/Paste rely on document.execCommand, which the Windows
-        // WebView2 blocks (notably paste) — so right-click Copy/Paste silently did nothing
-        // (QA ZITEXT_V2_004). These overrides make them work consistently cross-platform.
+        // WebView2 blocks (notably paste) — so right-click Copy/Paste silently did nothing.
+        // These overrides make them work consistently cross-platform.
         // The implementations live in utils/editorCommands so the Edit menu drives the
         // exact same code paths.
         editor.addAction({
@@ -428,6 +488,13 @@ export function EditorPanel({
             <Editor
                 height="100%"
                 path={modelPath}
+                // Models belong to tabs, not to this view. Without this the
+                // wrapper disposes its model whenever the panel unmounts
+                // (preview toggle, split/single switch), destroying undo history
+                // and, when both split panes show one tab, the model the other
+                // pane is still using (which then crashed the app). Models are
+                // disposed only when their tab closes (disposeModelForTab).
+                keepCurrentModel
                 language={language}
                 value={content}
                 theme={editorTheme}

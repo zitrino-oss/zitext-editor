@@ -7,6 +7,7 @@ export const isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent);
 // macOS keeps the native chrome plus the AppKit menu; Linux keeps the WM's frame,
 // where an undecorated window loses reliable edge-resize under several compositors.
 export const isWindows = /Windows/i.test(navigator.userAgent);
+export const isLinux = !isMac && !isWindows && /Linux/i.test(navigator.userAgent);
 
 export const modKey = isMac ? 'Cmd' : 'Ctrl';
 
@@ -28,7 +29,26 @@ export interface ShortcutHandler {
 }
 
 export function normalizeShortcutKey(key: string): string {
-    return key === ' ' ? 'space' : key.toLowerCase();
+    if (key === ' ') return 'space';
+    const lower = key.toLowerCase();
+    // Bindings spell "+" as "Plus": "+" is also the separator ("Ctrl+Plus").
+    return lower === 'plus' ? '+' : lower;
+}
+
+/**
+ * The key a shortcut should match for this event. Normally `event.key`, but
+ * when that is a non-ASCII character (a Cyrillic, Greek, Hebrew or Arabic
+ * layout, or a macOS Option-composed character such as "Ω" for Option+Z) the
+ * physical key from `event.code` is used for letters and digits, so Ctrl+S,
+ * Alt+Z and friends work on every layout.
+ */
+export function shortcutKeyOf(event: KeyboardEvent): string {
+    const key = normalizeShortcutKey(event.key);
+    if (key.length === 1 && key.charCodeAt(0) > 0x7f) {
+        const physical = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code ?? '');
+        if (physical) return (physical[1] ?? physical[2]).toLowerCase();
+    }
+    return key;
 }
 
 const MODIFIER_REQUIRED_KEYS = new Set([
@@ -39,6 +59,30 @@ const MODIFIER_REQUIRED_KEYS = new Set([
 export function requiresShortcutModifier(key: string): boolean {
     const normalized = normalizeShortcutKey(key);
     return normalized.length === 1 || MODIFIER_REQUIRED_KEYS.has(normalized);
+}
+
+/**
+ * True while an input method (IME) is composing text (Chinese, Japanese,
+ * Korean and others). The Enter that commits a composition must not also
+ * trigger an action such as Replace or running a palette command.
+ */
+export function isImeComposing(event: KeyboardEvent | { nativeEvent: KeyboardEvent }): boolean {
+    const native = 'nativeEvent' in event ? event.nativeEvent : event;
+    return native.isComposing || native.keyCode === 229;
+}
+
+/**
+ * Keys a browser engine treats as "reload" or "go back/forward". In the app
+ * webview these would discard the whole editor state (WebView2 on Windows
+ * honours F5 / Ctrl+R / Ctrl+Shift+R). The app never uses them unless the user
+ * binds one to a command, so the caller blocks them only when no app shortcut
+ * handled the event.
+ */
+export function isBrowserNavigationKey(event: KeyboardEvent): boolean {
+    if (event.key === 'F5' || event.key === 'BrowserRefresh') return true;
+    if (event.key === 'BrowserBack' || event.key === 'BrowserForward') return true;
+    const mod = event.ctrlKey || event.metaKey;
+    return mod && !event.altKey && (event.key === 'r' || event.key === 'R');
 }
 
 export function handleKeyDown(
@@ -56,12 +100,15 @@ export function handleKeyDown(
             ? event.shiftKey === handler.shift
             : true;
 
-        const altMatch = handler.alt !== undefined
-            ? event.altKey === handler.alt
-            : true;
+        // Alt must match exactly; a binding that doesn't mention Alt requires
+        // it to be up. Treating "unspecified" as "either" let AltGr (reported
+        // as Ctrl+Alt on Windows) trigger Ctrl shortcuts: typing "\" on a German
+        // or French keyboard toggled split view and swallowed the character.
+        const altMatch = event.altKey === (handler.alt ?? false)
+            && !(handler.alt !== true && event.getModifierState?.('AltGraph'));
 
         if (
-            normalizeShortcutKey(event.key) === normalizeShortcutKey(handler.key) &&
+            shortcutKeyOf(event) === normalizeShortcutKey(handler.key) &&
             modifierMatch &&
             shiftMatch &&
             altMatch
@@ -93,17 +140,22 @@ export function parseBinding(binding: string): { key: string; ctrlOrCmd: boolean
         if (lower === 'ctrl' || lower === 'cmd' || lower === 'meta') ctrlOrCmd = true;
         else if (lower === 'shift') shift = true;
         else if (lower === 'alt' || lower === 'option') alt = true;
-        else key = part.toLowerCase();
+        else if (part) key = normalizeShortcutKey(part);
     }
+    // "Ctrl++", as older versions recorded it, splits into empty parts.
+    if (!key && binding.endsWith('+')) key = '+';
 
     return { key, ctrlOrCmd, shift, alt };
 }
 
-/** Drops legacy shortcuts that can fire while the user is simply typing. */
+/** Drops legacy shortcuts that can fire while the user is simply typing, and
+ *  on macOS a stored Cmd+H for Replace (older versions saved it on Reset):
+ *  Cmd+H now hides the app, and Replace defaults to Cmd+Option+F. */
 export function sanitizeKeybindings(
     bindings: Record<string, string>,
 ): Record<string, string> {
-    return Object.fromEntries(Object.entries(bindings).filter(([, binding]) => {
+    return Object.fromEntries(Object.entries(bindings).filter(([command, binding]) => {
+        if (isMac && command === 'replace' && binding.toLowerCase() === 'cmd+h') return false;
         const parsed = parseBinding(binding);
         return !(requiresShortcutModifier(parsed.key) && !parsed.ctrlOrCmd && !parsed.alt);
     }));

@@ -7,7 +7,7 @@ By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md)
 
 ## Prerequisites
 
-- **Node.js** 22 LTS (see `.nvmrc`)
+- **Node.js** 22.22.2 or a later 22.x release (see `.nvmrc`)
 - **Rust** 1.93.0 (installed automatically from `rust-toolchain.toml`)
 - **Tauri prerequisites** for your platform — https://tauri.app/start/prerequisites/
   - macOS: Xcode Command Line Tools (`xcode-select --install`)
