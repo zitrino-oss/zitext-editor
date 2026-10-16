@@ -235,8 +235,9 @@ describe('Find in a previewed split pane', () => {
                 onLeftScrollChange={() => {}} onRightScrollChange={() => {}} onLeftEditorReady={() => {}} onRightEditorReady={() => {}}
                 leftPreviewRef={left} rightPreviewRef={right} />,
         );
-        // The preview loads on first use.
-        for (let i = 0; i < 20 && !right.current; i++) await flush();
+        // The preview loads on first use; how many ticks that takes depends on
+        // the build tooling, so allow plenty and stop as soon as it appears.
+        for (let i = 0; i < 200 && !right.current; i++) await flush();
         expect(left.current).toBeNull();
         expect(right.current).toBeInstanceOf(HTMLElement);
         expect(right.current!.closest('.split-pane-right')).not.toBeNull();

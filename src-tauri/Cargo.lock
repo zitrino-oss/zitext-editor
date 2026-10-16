@@ -5757,6 +5757,7 @@ dependencies = [
  "encoding_rs",
  "libc",
  "rand",
+ "regex",
  "serde",
  "serde_json",
  "sha2",
