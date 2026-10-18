@@ -124,7 +124,10 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
                     file.cursor_column,
                     file.scroll_top || 0,
                     file.scroll_left || 0,
-                    true
+                    true,
+                    // Unsaved edits of a file that can't be reopened become a
+                    // Recovered tab below, with its own notice.
+                    file.is_dirty === true && file.content !== undefined,
                 ))
             );
             results.forEach((result, idx) => {
@@ -337,6 +340,22 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
         });
     };
 
+    // A new tab holding generated text (a tool's result). The tab is filled
+    // through the tab manager's state updaters: it was created in this same
+    // call, so it isn't in this render's tab list yet and updateTabContent
+    // (which looks it up there) would drop the text, leaving an empty tab.
+    const { createNewTab, updateTab, changeLanguage } = tabManager;
+    const openTabWithContent = useCallback((content: string, language: string): string => {
+        const tabId = createNewTab();
+        updateTab(tabId, {
+            content,
+            isDirty: true,
+            eol: content.includes('\r\n') ? 'CRLF' : 'LF',
+        });
+        changeLanguage(tabId, language);
+        return tabId;
+    }, [createNewTab, updateTab, changeLanguage]);
+
     // Remove the unused session_active localStorage key.
     useEffect(() => {
         localStorage.removeItem('session_active');
@@ -444,6 +463,7 @@ export function useEditorState(onRecentFilesChanged?: () => Promise<void> | void
         beginClose,
         cancelClose,
         updateTabContent,
+        openTabWithContent,
         updateCursorPosition: tabManager.updateCursorPosition,
         updateScrollPosition: tabManager.updateScrollPosition,
         toggleReadOnly: tabManager.toggleReadOnly,

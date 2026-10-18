@@ -192,6 +192,7 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
                     className="file-explorer-search-clear"
                     onClick={() => runSearch(query, caseSensitive, wholeWord)}
                     title="Search (Enter)"
+                    aria-label="Search"
                     disabled={isSearching}
                 >
                     {isSearching ? (
@@ -199,9 +200,11 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
                             <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
                         </svg>
                     ) : (
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <circle cx="11" cy="11" r="8"/>
-                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                        // An Enter arrow, not a second magnifier: the box already
+                        // has one, and this button runs the search like Enter does.
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <polyline points="9 10 4 15 9 20"/>
+                            <path d="M20 4v7a4 4 0 0 1-4 4H4"/>
                         </svg>
                     )}
                 </button>

@@ -27,6 +27,9 @@ interface LogViewerProps {
     fontFamily: string;
     fontSize: number;
     onRegisterCommands: (commands: ViewCommands | null) => void;
+    /** The file couldn't be opened (too many open, deleted, unreadable). The
+     *  app closes the view and shows the reason; without it, the view shows it. */
+    onOpenFailed?: (message: string) => void;
 }
 
 interface FilterChip extends LineRule {
@@ -40,6 +43,8 @@ const MAX_SELECTION_LINES = 100_000;
 /** Most lines copied to the clipboard. */
 const MAX_COPY_LINES = 10_000;
 const LIVE_POLL_MS = 1000;
+/** Keys that move through the lines from anywhere in the viewer but a text box. */
+const LINE_NAVIGATION_KEYS = new Set(['Home', 'End', 'PageUp', 'PageDown', 'ArrowUp', 'ArrowDown']);
 const BUSY_POLL_MS = 250;
 
 let nextChipId = 1;
@@ -60,7 +65,9 @@ function usePageVisible(): boolean {
     return pageVisible;
 }
 
-export function LogViewer({ path, visible, fontFamily, fontSize, onRegisterCommands }: LogViewerProps) {
+export function LogViewer({ path, visible, fontFamily, fontSize, onRegisterCommands, onOpenFailed }: LogViewerProps) {
+    const openFailed = useRef(onOpenFailed);
+    openFailed.current = onOpenFailed;
     const [status, setStatus] = useState<LargeFileStatus | null>(null);
     const ready = status !== null;
     const pageVisible = usePageVisible();
@@ -199,7 +206,11 @@ export function LogViewer({ path, visible, fontFamily, fontSize, onRegisterComma
                 idRef.current = opened.id;
                 setStatus(opened);
             })
-            .catch(error => { if (!cancelled) setOpenError(errorText(error)); });
+            .catch(error => {
+                if (cancelled) return;
+                if (openFailed.current) openFailed.current(errorText(error));
+                else setOpenError(errorText(error));
+            });
         return () => {
             cancelled = true;
             const id = idRef.current;
@@ -573,6 +584,19 @@ export function LogViewer({ path, visible, fontFamily, fontSize, onRegisterComma
         event.stopPropagation();
     };
 
+    // Home, End, Page Up/Down and the arrows move through the lines even when
+    // a toolbar button (Live, Follow, Latest…) has focus after a click; they
+    // used to go to that button and do nothing. Text boxes, drop-downs and the
+    // open menus keep their own keys.
+    const onViewerKeyDown = (event: React.KeyboardEvent) => {
+        if (event.defaultPrevented || event.target === bodyRef.current) return;
+        if (!LINE_NAVIGATION_KEYS.has(event.key)) return;
+        const target = event.target as HTMLElement;
+        if (target.closest('input, textarea, select, [contenteditable="true"], [role="menu"]')) return;
+        bodyRef.current?.focus();
+        onBodyKeyDown(event);
+    };
+
     // Custom scrollbar
     const trackRef = useRef<HTMLDivElement>(null);
     const thumbFraction = total > 0 ? Math.min(1, viewportRows / total) : 1;
@@ -620,7 +644,7 @@ export function LogViewer({ path, visible, fontFamily, fontSize, onRegisterComma
     const indexedPercent = status && status.size > 0 ? Math.floor((status.indexedBytes / status.size) * 100) : 100;
 
     return (
-        <div ref={rootRef} className="log-viewer" style={{ fontFamily, fontSize }}>
+        <div ref={rootRef} className="log-viewer" style={{ fontFamily, fontSize }} onKeyDown={onViewerKeyDown}>
             <div className="log-toolbar" role="toolbar" aria-label="Log viewer">
                 <div className="log-toolbar-group">
                     <input

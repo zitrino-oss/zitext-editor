@@ -12,7 +12,7 @@
  * editor, which can only ignore leading/trailing whitespace; here case and
  * blank lines can be ignored too.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { editor, IDisposable } from 'monaco-editor';
 import monaco from '../monaco-config';
 import { getModelForTab, modelUriForTab } from '../utils/editorModels';
@@ -21,6 +21,7 @@ import { alignmentZones, anchorLine, changeAtOrAfter, changeSummary } from '../u
 import { HeavyTaskAborted, runHeavyTaskOffThread } from '../utils/heavyTasks';
 import type { ViewCommands } from '../utils/workspaceViews';
 import { addClipboardActions } from '../utils/clipboardActions';
+import { leaveFindAndGoToLineToApp } from '../utils/viewEditorKeys';
 
 export type ResolvedSide =
     | { kind: 'tab'; tabId: string; title: string; content: string; language: string; readOnly: boolean; isDirty: boolean }
@@ -38,6 +39,12 @@ interface CompareViewProps {
     onSaveTab: (tabId: string) => void;
     onSwap: () => void;
     onRegisterCommands: (commands: ViewCommands | null) => void;
+    /** The app's Find & Replace bar, placed over the panes (Monaco's own find
+     *  widget is hidden app-wide); it searches the pane last focused. */
+    findBar?: ReactNode;
+    /** The editor Find works on changed (another pane focused, or the editors
+     *  were rebuilt by Swap or Inline); the Find bar re-attaches to it. */
+    onActiveEditorChange?: () => void;
 }
 
 /** Inputs with more lines than this are compared in the background worker. */
@@ -70,8 +77,10 @@ function acquireModel(viewId: string, which: Side, side: ResolvedSide): { model:
 
 export function CompareView({
     viewId, left, right, visible, editorTheme, fontFamily, fontSize,
-    onTabEdited, onSaveTab, onSwap, onRegisterCommands,
+    onTabEdited, onSaveTab, onSwap, onRegisterCommands, findBar, onActiveEditorChange,
 }: CompareViewProps) {
+    const activeEditorChanged = useRef(onActiveEditorChange);
+    activeEditorChanged.current = onActiveEditorChange;
     const [options, setOptions] = useState<DiffOptions>(DEFAULT_DIFF_OPTIONS);
     const [inline, setInline] = useState(false);
     // The diff and the modelVersion it was computed for. Changes are only
@@ -197,6 +206,7 @@ export function CompareView({
         editors.current = { left: leftEditor, right: rightEditor };
         lastFocused.current = rightEditor;
         setEditorsVersion(v => v + 1);
+        activeEditorChanged.current?.();
 
         // The clipboard items every ZITEXT editor has (monaco-config removes
         // Monaco's own, which WebView2 blocks), and which editor the Edit menu
@@ -205,7 +215,12 @@ export function CompareView({
         for (const target of [leftEditor, rightEditor]) {
             if (!target) continue;
             addClipboardActions(target);
-            focusSubscriptions.push(target.onDidFocusEditorText(() => { lastFocused.current = target; }));
+            leaveFindAndGoToLineToApp(target);
+            focusSubscriptions.push(target.onDidFocusEditorText(() => {
+                if (lastFocused.current === target) return;
+                lastFocused.current = target;
+                activeEditorChanged.current?.();
+            }));
         }
 
         // Side by side, the two editors scroll together.
@@ -475,13 +490,20 @@ export function CompareView({
 
     useEffect(() => {
         if (!visible) return;
+        // Find and Go to Line use the app's own bar and dialog on activeEditor
+        // (App); before either pane is clicked that is the right one.
         onRegisterCommands({
-            find: () => (editors.current.right ?? editors.current.left)?.getAction('actions.find')?.run(),
             save: saveSides,
-            activeEditor: () => lastFocused.current,
+            activeEditor: () => lastFocused.current ?? editors.current.right ?? editors.current.left,
         });
         return () => onRegisterCommands(null);
     }, [visible, onRegisterCommands, saveSides]);
+
+    // Shown again: the Find bar is mounted anew and re-attaches once the
+    // commands above are registered (this runs after that effect).
+    useEffect(() => {
+        if (visible) activeEditorChanged.current?.();
+    }, [visible]);
 
     const onKeyDown = (event: React.KeyboardEvent) => {
         if (event.key !== 'F5' || !event.altKey) return;
@@ -540,6 +562,8 @@ export function CompareView({
                     <span>These files differ in too many places to match every line exactly; part of the comparison is shown as one block.</span>
                 </div>
             )}
+            <div className="view-editor-area compare-find-area">
+            {findBar}
             <div className={`compare-panes${inline ? ' inline' : ''}`}>
                 {!inline && (
                     <div className="compare-pane">
@@ -553,6 +577,7 @@ export function CompareView({
                         : header(right, 'right')}
                     <div ref={rightHost} className="compare-editor" />
                 </div>
+            </div>
             </div>
         </div>
     );

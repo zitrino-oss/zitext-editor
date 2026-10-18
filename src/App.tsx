@@ -50,7 +50,7 @@ import { markOpenListenersReady } from './utils/openRequests';
 import { canPreviewMarkdown, isJsoncPath, LANGUAGES, showsPreview } from './utils/languages';
 import { windowCaption } from './utils/windowTitle';
 import { shouldFormatOnSave } from './utils/dataTransform';
-import { fileNameOf, newViewId, onDocumentOpened, onLargeFileRequest, type CompareSide, type ViewCommands, type WorkspaceView } from './utils/workspaceViews';
+import { canOpenAnotherLogView, fileNameOf, newViewId, onDocumentOpened, onLargeFileRequest, TOO_MANY_LOG_VIEWS, type CompareSide, type ViewCommands, type WorkspaceView } from './utils/workspaceViews';
 import type { ResolvedSide } from './components/CompareView';
 import type { Tab } from './types';
 import type { ViewTab } from './components/TabBar';
@@ -75,6 +75,7 @@ async function scratchpadReadyToQuit(): Promise<boolean> {
     );
 }
 import type { PromptRequest } from './components/InputPrompt';
+import type { AppearancePreview } from './components/SettingsModal';
 import { checkRegexSpeed } from './utils/heavyTasks';
 
 // Loaded on first use; it stays mounted (hidden) afterwards.
@@ -102,6 +103,7 @@ interface HandlersRef {
     openRequestedFile: (path: string) => Promise<string | null>;
     openFileFromDialog: () => Promise<void>;
     handleOpenFolder: () => Promise<void>;
+    closeFolderIfOpen: () => void;
     activeTabId: string | null;
     saveFile: (id: string, contentOverride?: string) => Promise<boolean>;
     saveFileAs: (id: string) => Promise<void>;
@@ -152,7 +154,7 @@ function App() {
         tabs,
         activeTab,
         activeTabId,
-        settings,
+        settings: savedSettings,
         isLoading,
         createNewTab,
         openFile,
@@ -169,6 +171,7 @@ function App() {
         cancelClose,
         setActiveTabId,
         updateTabContent,
+        openTabWithContent,
         updateCursorPosition,
         updateScrollPosition,
         toggleReadOnly,
@@ -189,6 +192,31 @@ function App() {
     } = useEditorState(async () => {
         await loadRecentFiles();
     });
+
+    // While Settings is open, theme, fonts and size show as they are picked
+    // (appearancePreview); Save keeps them, Cancel drops them. The rest of the
+    // app reads `settings`, the saved settings with any preview on top.
+    const [appearancePreview, setAppearancePreview] = useState<AppearancePreview | null>(null);
+    const settings = useMemo(
+        () => (appearancePreview ? { ...savedSettings, ...appearancePreview } : savedSettings),
+        [savedSettings, appearancePreview],
+    );
+    const settingsSavingRef = useRef(false);
+    const settingsDialogOpenRef = useRef(false);
+    const saveSettingsFromDialog = (updates: Partial<typeof savedSettings>) => {
+        // Keep the preview until the save lands, so the window doesn't flash
+        // back to the old look in between; a failed save then reverts it.
+        // If Settings was opened again meanwhile, its own preview stays.
+        settingsSavingRef.current = true;
+        void updateSettings(updates).finally(() => {
+            settingsSavingRef.current = false;
+            if (!settingsDialogOpenRef.current) setAppearancePreview(null);
+        });
+    };
+    const closeSettingsDialog = () => {
+        setSettingsModalOpen(false);
+        if (!settingsSavingRef.current) setAppearancePreview(null);
+    };
 
     const {
         openedFolder,
@@ -234,12 +262,13 @@ function App() {
     // it. The chrome would switch and the editor would stay on the old theme.
     useLayoutEffect(() => {
         document.documentElement.setAttribute('data-theme', resolvedTheme);
-        try { localStorage.setItem('zitext_theme', settings.theme); } catch { /* private browsing */ }
+        // The saved preference only: a Settings preview isn't kept for next launch.
+        try { localStorage.setItem('zitext_theme', savedSettings.theme); } catch { /* private browsing */ }
         // The native window theme is owned by useResolvedTheme — it has to be
         // the *preference*, not the resolved value, or 'system' pins itself.
 
         monaco.editor.setTheme(defineEditorTheme(resolvedTheme === 'dark', readToken));
-    }, [settings.theme, resolvedTheme]);
+    }, [savedSettings.theme, resolvedTheme]);
 
     // Chrome typeface. Overrides --font-ui on <html> rather than replacing the
     // token, so the stylesheet keeps its fallback stack if the setting is blank.
@@ -255,6 +284,7 @@ function App() {
     // UI state
     const [goToLineModalOpen, setGoToLineModalOpen] = useState(false);
     const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+    settingsDialogOpenRef.current = settingsModalOpen;
     const [aboutModalOpen, setAboutModalOpen] = useState(false);
     const [appVersion, setAppVersion] = useState('');
     useEffect(() => { getVersion().then(setAppVersion); }, []);
@@ -298,6 +328,13 @@ function App() {
     activeTabIdRef.current = activeTabId;
     const viewCommandsRef = useRef<ViewCommands | null>(null);
     const registerViewCommands = useCallback((commands: ViewCommands | null) => { viewCommandsRef.current = commands; }, []);
+    // Bumped by a view when the editor its Find bar works on changes (shown,
+    // created, another Compare pane focused). The bar attaches to its getEditor
+    // once per function identity, so this gives it a new one (getViewEditor)
+    // to re-attach and search again. Views call it from effects that run after
+    // they registered their commands, never on every render.
+    const [viewEditorEpoch, setViewEditorEpoch] = useState(0);
+    const noteViewEditorChanged = useCallback(() => setViewEditorEpoch(n => n + 1), []);
 
     // The tab that currently has focus (left pane unless split view + right pane
     // is focused). None while a view is on screen, so tab commands (Save, Close
@@ -403,14 +440,28 @@ function App() {
         notifyAutosaveChange();
     }, [updateTabContent, notifyAutosaveChange]);
 
+    // Only the newest request applies, so a slow answer can't replace a newer list.
+    const recentRequestRef = useRef(0);
     const loadRecentFiles = useCallback(async () => {
+        const request = ++recentRequestRef.current;
         const files = await getRecentFiles();
+        if (request !== recentRequestRef.current) return;
         setRecentFiles(files);
         recentFilesRef.current = files;
     }, []);
 
+    // Also each time the Welcome screen (which lists them) comes back, and when
+    // the window gets focus again (files are usually deleted in another app),
+    // so a deleted file isn't offered. Not while a menu is open: the list
+    // would shift under the pointer.
+    const showsWelcome = tabs.length === 0;
     useEffect(() => {
-        void loadRecentFiles();
+        if (showsWelcome) void loadRecentFiles();
+    }, [loadRecentFiles, showsWelcome]);
+    useEffect(() => {
+        const refresh = () => { void loadRecentFiles(); };
+        window.addEventListener('focus', refresh);
+        return () => window.removeEventListener('focus', refresh);
     }, [loadRecentFiles]);
 
     // Paths of open tabs with unsaved changes, so the explorer can mark them the
@@ -473,6 +524,15 @@ function App() {
         }
         return leftEditorInstance;
     }, [shownViewId, splitViewEnabled, activePane, leftEditorInstance, rightEditorInstance]);
+    /** getActiveEditor for a view's Find bar, renewed when its editor changes. */
+    const getViewEditor = useCallback(
+        () => (viewEditorEpoch >= 0 ? getActiveEditor() : null),
+        [getActiveEditor, viewEditorEpoch],
+    );
+
+    // Find is opened for what is on screen: moving between a document and a
+    // view (or between views) closes it rather than carrying it across.
+    useEffect(() => { setFindOpen(false); }, [shownViewId]);
 
     // The rendered Markdown body, so Find can search the preview in place rather
     // than forcing the tab back to source view.
@@ -777,6 +837,17 @@ function App() {
     // ─── Other editor actions ───────────────────────────────────────────────
 
     const handleGoToLine = (lineNumber: number, column: number) => {
+        if (shownViewId) {
+            // A view's editor (Scratchpad, Compare) isn't a tab: move it directly.
+            const ed = getActiveEditor();
+            const model = ed?.getModel();
+            if (!ed || !model) return;
+            const position = model.validatePosition({ lineNumber, column });
+            ed.setPosition(position);
+            ed.revealLineInCenter(position.lineNumber);
+            ed.focus();
+            return;
+        }
         if (focusedTab) requestReveal(focusedTab.id, lineNumber, column);
     };
 
@@ -838,7 +909,7 @@ function App() {
             // Try to restore cursor/scroll position from the last saved session.
             const session = await getLastSession();
             const entry = session.find(s => s.path === path);
-            await openFile(
+            const opened = await openFile(
                 path,
                 entry?.cursor_line ?? 1,
                 entry?.cursor_column ?? 1,
@@ -846,10 +917,12 @@ function App() {
                 entry?.scroll_left ?? 0,
                 true
             );
+            // A file that couldn't be opened (deleted since) drops out of the list.
+            if (!opened) void loadRecentFiles();
         } catch (error) {
             errorService.showError('Failed to open file', error as Error);
         }
-    }, [openFile]);
+    }, [openFile, loadRecentFiles]);
 
     const handleChangeLanguage = (language: string) => {
         if (focusedTabId) changeLanguage(focusedTabId, language);
@@ -873,6 +946,12 @@ function App() {
         closeFolder();
         await updateSettings({ openedFolder: null, sidebarCollapsed: true });
     }, [closeFolder, updateSettings]);
+
+    // File → Close Folder and the palette; nothing to do without an open folder
+    // (the macOS native menu item can't be disabled per state).
+    const closeFolderIfOpen = useCallback(() => {
+        if (openedFolder) void handleCloseFolder();
+    }, [openedFolder, handleCloseFolder]);
 
     const handleExplorerFolderOpen = useCallback((path: string) => {
         setOpenedFolder(path);
@@ -941,6 +1020,10 @@ function App() {
         const existing = viewsRef.current.find(view => view.kind === 'log' && view.path === target);
         if (existing) {
             showView(existing.id);
+            return;
+        }
+        if (!canOpenAnotherLogView(viewsRef.current)) {
+            errorService.showWarning(TOO_MANY_LOG_VIEWS);
             return;
         }
         const id = newViewId();
@@ -1060,9 +1143,8 @@ function App() {
     const [promptRequest, setPromptRequest] = useState<PromptRequest | null>(null);
 
     const openInNewTab = (content: string, language: string) => {
-        const id = createNewTab();
-        updateTabContentAndAutosave(id, content);
-        changeLanguage(id, language);
+        openTabWithContent(content, language);
+        notifyAutosaveChange();
     };
 
     const runTextTool = async (id: TextToolId, input?: { delimiter?: string; trimPieces?: boolean }) => {
@@ -1180,9 +1262,13 @@ function App() {
 
     /** Find, Go to Line and Save go to the view on screen, if there is one. */
     const runViewCommand = (name: keyof ViewCommands) => { viewCommandsRef.current?.[name]?.(); };
-    const routeFind = () => { if (shownView) runViewCommand('find'); else handleFind(); };
-    const routeReplace = () => { if (shownView) runViewCommand('find'); else handleReplace(); };
-    const openGoToLine = () => { if (shownView) runViewCommand('goToLine'); else setGoToLineModalOpen(true); };
+    // The Log viewer has its own Find and Go to boxes. Documents and the views
+    // with an editor (Scratchpad, Compare) use the app's Find bar and Go to
+    // Line dialog; Monaco's own find widget is hidden app-wide.
+    const shownLogView = shownView?.kind === 'log';
+    const routeFind = () => { if (shownLogView) runViewCommand('find'); else handleFind(); };
+    const routeReplace = () => { if (shownLogView) runViewCommand('find'); else handleReplace(); };
+    const openGoToLine = () => { if (shownLogView) runViewCommand('goToLine'); else setGoToLineModalOpen(true); };
     const routeSave = () => {
         if (shownView) runViewCommand('save');
         else if (focusedTabId) void handleSave(focusedTabId);
@@ -1205,6 +1291,7 @@ function App() {
         openRequestedFile,
         openFileFromDialog,
         handleOpenFolder,
+        closeFolderIfOpen,
         activeTabId: focusedTabId,
         saveFile: handleSave,
         saveFileAs,
@@ -1389,6 +1476,7 @@ function App() {
             await l('menu-new', () => handlersRef.current?.createNewTab());
             await l('menu-open', () => handlersRef.current?.openFileFromDialog());
             await l('menu-open_folder', () => handlersRef.current?.handleOpenFolder());
+            await l('menu-close_folder', () => handlersRef.current?.closeFolderIfOpen());
             await l('menu-save', () => {
                 const h = handlersRef.current;
                 if (h?.shownViewId) h.runViewCommand('save');
@@ -1508,6 +1596,9 @@ function App() {
         { id: 'new-file',        label: 'New File',           description: 'Create a new untitled file',      category: 'File',    action: createNewTab },
         { id: 'open-file',       label: 'Open File',          description: 'Open a file from disk',           category: 'File',    action: openFileFromDialog },
         { id: 'open-folder',     label: 'Open Folder',        description: 'Open a workspace folder',         category: 'File',    action: handleOpenFolder },
+        ...(openedFolder ? [
+            { id: 'close-folder', label: 'Close Folder',      description: 'Close the workspace folder; open files stay open', category: 'File', action: closeFolderIfOpen },
+        ] : []),
         { id: 'save',            label: 'Save',               description: 'Save current file',               category: 'File',    action: routeSave },
         { id: 'save-as',         label: 'Save As',            description: 'Save current file with new name', category: 'File',    action: () => focusedTabId && saveFileAs(focusedTabId) },
         { id: 'revert-file',     label: 'Revert File',        description: 'Go back to the last saved version', category: 'File', action: handleRevertFile },
@@ -1590,6 +1681,19 @@ function App() {
     // array: this used to run on every render, including each cursor move.
     const focusedContent = focusedTab?.content;
     const maxLine = useMemo(() => (focusedContent === undefined ? 1 : countLines(focusedContent)), [focusedContent]);
+    // Go to Line's limit: the focused document, or the shown view's editor.
+    const goToMaxLine = shownViewId ? (getActiveEditor()?.getModel()?.getLineCount() ?? 1) : maxLine;
+
+    // The Find & Replace bar for the Scratchpad and Compare views, on the
+    // view's own editor (getActiveEditor). Documents render theirs below.
+    const viewFindBar = (
+        <FindReplaceBar
+            isOpen={findOpen}
+            showReplace={findShowReplace}
+            onClose={() => setFindOpen(false)}
+            getEditor={getViewEditor}
+        />
+    );
 
     if (isLoading) {
         return <div className="loading"><div>Loading...</div></div>;
@@ -1667,6 +1771,8 @@ function App() {
                     isFullscreen={isFullscreen}
                     recentFiles={recentFiles}
                     onOpenRecent={handleOpenRecent}
+                    onCloseFolder={closeFolderIfOpen}
+                    hasOpenFolder={!!openedFolder}
                     settings={settings}
                     hasActiveTab={focusedTab !== null}
                     shownViewKind={shownView?.kind ?? null}
@@ -1788,6 +1894,11 @@ function App() {
                                                 fontFamily={settings.fontFamily}
                                                 fontSize={settings.fontSize}
                                                 onRegisterCommands={registerViewCommands}
+                                                onOpenFailed={message => {
+                                                    // Only the message, no tab left holding an error.
+                                                    closeView(view.id);
+                                                    errorService.showWarning(`"${view.title}" couldn't be opened. ${message}`);
+                                                }}
                                             />
                                         </div>
                                     );
@@ -1803,6 +1914,8 @@ function App() {
                                                     fontSize={settings.fontSize}
                                                     wordWrap={settings.wordWrap}
                                                     onRegisterCommands={registerViewCommands}
+                                                    findBar={visible ? viewFindBar : null}
+                                                    onEditorChange={noteViewEditorChanged}
                                                 />
                                             </PaneErrorBoundary>
                                         </div>
@@ -1826,6 +1939,8 @@ function App() {
                                                 onSaveTab={(tabId) => { void handleSave(tabId); }}
                                                 onSwap={() => swapCompareSides(view.id)}
                                                 onRegisterCommands={registerViewCommands}
+                                                findBar={visible ? viewFindBar : null}
+                                                onActiveEditorChange={noteViewEditorChanged}
                                             />
                                         </PaneErrorBoundary>
                                     </div>
@@ -1947,12 +2062,12 @@ function App() {
 
             {goToLineModalOpen && (
                 <Suspense fallback={null}>
-                    <GoToLineModal isOpen onClose={() => setGoToLineModalOpen(false)} onGoToLine={handleGoToLine} maxLine={maxLine} />
+                    <GoToLineModal isOpen onClose={() => setGoToLineModalOpen(false)} onGoToLine={handleGoToLine} maxLine={goToMaxLine} />
                 </Suspense>
             )}
             {settingsModalOpen && (
                 <Suspense fallback={null}>
-                    <SettingsModal isOpen onClose={() => setSettingsModalOpen(false)} settings={settings} onSave={updateSettings} />
+                    <SettingsModal isOpen onClose={closeSettingsDialog} settings={savedSettings} onSave={saveSettingsFromDialog} onPreview={setAppearancePreview} />
                 </Suspense>
             )}
             {promptRequest && (

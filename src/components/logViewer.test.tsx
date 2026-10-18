@@ -295,3 +295,54 @@ describe('Large File / Log viewer', () => {
         expect(fetched.every(([, args]) => (args.count as number) <= 200)).toBe(true);
     });
 });
+
+describe('Home and End in a live log', () => {
+    it('move to the last and first line after clicking a toolbar button such as Follow', async () => {
+        vi.useFakeTimers();
+        const { host } = await render();
+        // The log grows while it is followed (Live polls once a second).
+        fake.state.lines.push('2026-10-07 12:01:00 INFO new 1', '2026-10-07 12:01:01 INFO new 2');
+        await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
+        await flush();
+        const follow = button(host, 'Follow');
+        act(() => { follow.focus(); follow.click(); });
+        press(follow, 'End');
+        await flush();
+        expect(host.querySelector('.log-row.selected .log-gutter')?.textContent).toBe('1002');
+        expect(document.activeElement).toBe(host.querySelector('.log-body'));
+        press(host.querySelector('.log-body')!, 'Home');
+        await flush();
+        expect(host.querySelector('.log-row.selected .log-gutter')?.textContent).toBe('1');
+    });
+
+    it('leave the keys of the filter box alone', async () => {
+        const { host } = await render();
+        const filter = input(host, 'Filter text');
+        act(() => filter.focus());
+        press(filter, 'End');
+        await flush();
+        expect(host.querySelector('.log-row.selected')).toBeNull();
+        expect(document.activeElement).toBe(filter);
+    });
+});
+
+describe('A file the viewer cannot open', () => {
+    it('is handed to the app (which closes the view) instead of leaving an error panel', async () => {
+        const opening = fake.invoke.getMockImplementation()!;
+        fake.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'large_file_open') throw 'Too many large files are open. Close one first.';
+            return opening(command, args);
+        });
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const root = createRoot(host);
+        const onOpenFailed = vi.fn();
+        act(() => root.render(
+            <LogViewer path="/logs/app.log" visible fontFamily="monospace" fontSize={14} onRegisterCommands={() => {}} onOpenFailed={onOpenFailed} />,
+        ));
+        unmount = () => { act(() => root.unmount()); host.remove(); fake.invoke.mockImplementation(opening); };
+        await flush();
+        expect(onOpenFailed).toHaveBeenCalledWith('Too many large files are open. Close one first.');
+        expect(host.textContent).not.toContain("couldn't be opened");
+    });
+});

@@ -127,8 +127,10 @@ export function KeybindingEditor({ isOpen, onClose, keybindings, onSave }: Keybi
                     </button>
                 </div>
 
+                {/* Outside the scrolling list, so it stays in view while a
+                    binding further down is being recorded. */}
+                {captureError && <p className="kb-capture-error" role="alert">{captureError}</p>}
                 <div className="kb-list">
-                    {captureError && <p className="kb-capture-error" role="alert">{captureError}</p>}
                     <div className="kb-list-header">
                         <span>Command</span>
                         <span>Binding</span>

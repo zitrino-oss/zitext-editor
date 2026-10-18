@@ -14,8 +14,10 @@ const env = vi.hoisted(() => ({
     commands: new Map<string, unknown>(),
     invoked: [] as string[],
     files: new Map<string, string>(),
+    readErrors: new Map<string, string>(),
     listeners: new Map<string, () => void>(),
     showWarning: vi.fn(),
+    showError: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -34,7 +36,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('../utils/editorModels', () => ({ disposeModelForTab: vi.fn() }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ ask: vi.fn(async () => true) }));
 vi.mock('../services/ErrorService', () => ({
-    errorService: { showWarning: env.showWarning, showError: vi.fn(), showSuccess: vi.fn() },
+    errorService: { showWarning: env.showWarning, showError: env.showError, showSuccess: vi.fn() },
 }));
 vi.mock('../utils/fileWatcher', () => ({
     fileWatcher: { watch: vi.fn(), unwatch: vi.fn(), unwatchAll: vi.fn(), updateVersion: vi.fn(), beginWrite: vi.fn(), endWrite: vi.fn(), unwatchOwner: vi.fn(), isPendingDeletion: vi.fn(() => false) },
@@ -44,6 +46,8 @@ vi.mock('../utils/fileOperations', async (importOriginal) => {
     return {
         ...actual,
         readFileContent: vi.fn(async (path: string): Promise<FileReadResult> => {
+            const failure = env.readErrors.get(path);
+            if (failure) throw new Error(failure);
             const content = env.files.get(path);
             if (content === undefined) throw new Error(`No such file: ${path}`);
             return { content, encoding: 'UTF-8', modified: 1, size: content.length, hash: `hash:${content}`, identity: path } as FileReadResult;
@@ -103,8 +107,10 @@ beforeEach(() => {
     env.commands.clear();
     env.invoked.length = 0;
     env.files.clear();
+    env.readErrors.clear();
     env.listeners.clear();
     env.showWarning.mockClear();
+    env.showError.mockClear();
     env.commands.set('settings_file_exists', true);
     env.commands.set('read_settings', {});
     env.commands.set('get_startup_args', []);
@@ -124,6 +130,16 @@ describe('Recovery when the original file cannot be reopened', () => {
         expect(recovered?.path).toBeNull();
         expect(recovered?.language).toBe('markdown');
         expect(env.showWarning).toHaveBeenCalledWith(expect.stringContaining('could not be reopened'));
+        // The Recovered notice explains it; no extra red "Failed to open file".
+        expect(env.showError).not.toHaveBeenCalled();
+    });
+
+    it('still reports a missing file that had no unsaved edits to recover', async () => {
+        env.commands.set('get_last_session', [{ path: '/project/gone.txt', cursor_line: 1, cursor_column: 1, is_dirty: false }]);
+        await start();
+
+        expect(state.current.tabs.some(t => t.title.startsWith('Recovered'))).toBe(false);
+        expect(env.showError).toHaveBeenCalledWith('Failed to open file', expect.anything());
     });
 });
 
@@ -216,5 +232,51 @@ describe('Language detection for untitled documents', () => {
         act(() => state.current.changeLanguage(id, 'plaintext'));
         act(() => state.current.updateTabContent(id, python));
         expect(state.current.tabs[0].language).toBe('plaintext');
+    });
+});
+
+describe('Tool results opened in a new tab', () => {
+    it('fill the new tab with the result instead of leaving it empty', async () => {
+        env.commands.set('get_last_session', []);
+        await start();
+        let id = '';
+        // Created and filled in one call, as Count Unique Lines, Decode JWT
+        // and the CSV/TSV/JSON conversions do.
+        act(() => { id = state.current.openTabWithContent('{\n  "name": "Zoë"\n}', 'json'); });
+        const tab = state.current.tabs.find(t => t.id === id);
+        expect(tab?.content).toBe('{\n  "name": "Zoë"\n}');
+        expect(tab?.language).toBe('json');
+        expect(tab?.isDirty).toBe(true);
+        expect(state.current.getTabContent(id)).toBe('{\n  "name": "Zoë"\n}');
+        expect(state.current.activeTabId).toBe(id);
+    });
+});
+
+describe('Restoring a file that grew past the editor limit (LOG-03)', () => {
+    it('shows a notice naming the Large File viewer instead of a blocking dialog', async () => {
+        const { ask } = await import('@tauri-apps/plugin-dialog');
+        vi.mocked(ask).mockClear();
+        env.readErrors.set('/project/grown.log', 'File too large (52428800 bytes); the limit is 10485760 bytes');
+        env.commands.set('get_last_session', [
+            { path: '/project/grown.log', cursor_line: 1, cursor_column: 1, is_dirty: false },
+        ]);
+        await start();
+
+        expect(ask).not.toHaveBeenCalled();
+        expect(env.showWarning).toHaveBeenCalledWith(expect.stringContaining('"grown.log" is too large to edit'));
+        expect(env.showWarning).toHaveBeenCalledWith(expect.stringContaining('Open Large File or Log'));
+    });
+});
+
+describe('Restoring unsaved edits of a file that grew past the limit', () => {
+    it('shows only the Recovered notice, not a second "too large" one', async () => {
+        env.readErrors.set('/project/huge.log', 'File too large (52428800 bytes); the limit is 10485760 bytes');
+        env.commands.set('get_last_session', [dirtyEntry('/project/huge.log', 'my unsaved notes')]);
+        await start();
+
+        expect(state.current.tabs.find(t => t.title === 'Recovered - huge.log')?.content).toBe('my unsaved notes');
+        expect(env.showWarning).toHaveBeenCalledTimes(1);
+        expect(env.showWarning).toHaveBeenCalledWith(expect.stringContaining('could not be reopened'));
+        expect(env.showError).not.toHaveBeenCalled();
     });
 });
