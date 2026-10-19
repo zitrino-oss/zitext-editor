@@ -231,7 +231,8 @@ body {
   transform: translateX(-50%);
   max-width: calc(100% - 300px);
   pointer-events: none;
-  font-family: var(--font-mono);
+  /* The interface typeface, as in the design's titlebar (not the code font). */
+  font-family: var(--font-ui);
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
@@ -1976,6 +1977,13 @@ body {
   cursor: default;
   font-style: italic;
   color: var(--text-muted);
+  /* Notes wrap in a narrow sidebar: grow with the text instead of keeping the
+     24px row height, which made the second line overlap the row above. */
+  height: auto;
+  min-height: 24px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  line-height: 1.35;
 }
 
 .find-in-files-notes {
@@ -2918,6 +2926,35 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 0 24px;
+}
+/* A refused or invalid shortcut: shown as a warning above the list, not as
+   plain text that reads like part of the page. */
+.kb-capture-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 24px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.kb-capture-error::before {
+  content: '!';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
 }
 .kb-list-header {
   display: flex;
@@ -4019,6 +4056,11 @@ body {
 .compare-pane-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .compare-badge { padding: 1px 6px; border-radius: 8px; background: var(--bg-hover); font-size: 11px; }
 .compare-editor { flex: 1; min-height: 0; }
+/* The editor area of the Scratchpad and Compare views, where the app's Find &
+   Replace bar sits (it is positioned against this box). */
+.view-editor-area { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+/* Below the pane headers, so the bar doesn't cover their Save buttons. */
+.compare-find-area > .fr-bar { top: 36px; }
 
 .monaco-editor .diff-line-added { background: var(--ok-soft); }
 .monaco-editor .diff-line-removed { background: var(--danger-soft); }
@@ -4054,5 +4096,7 @@ body {
 .input-prompt { width: min(440px, calc(100vw - 32px)); }
 .input-prompt-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text); }
 .input-prompt-field { width: 100%; height: 28px; font-family: var(--font-mono); }
-.input-prompt-option { margin-top: 10px; font-size: 13px; }
+/* Options sit side by side: space each one from the next, so a label doesn't
+   run into the following checkbox ("Match case☐Whole word"). */
+.input-prompt-option { margin-top: 10px; margin-right: 20px; gap: 6px; font-size: 13px; }
 .input-prompt-error { margin: 10px 0 0; color: var(--danger); font-size: 12px; }

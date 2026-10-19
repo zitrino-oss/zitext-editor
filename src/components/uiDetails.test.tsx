@@ -79,6 +79,21 @@ describe('font size setting', () => {
         expect(Number(slider.max)).toBe(MAX_FONT_SIZE);
         expect(slider.value).toBe('40');
     });
+
+    it('shows a new size as it is picked, before Save', () => {
+        const onPreview = vi.fn();
+        const onSave = vi.fn();
+        const host = render(<SettingsModal isOpen onClose={() => {}} onSave={onSave} onPreview={onPreview}
+            settings={{ fontSize: 14, theme: 'dark', uiFont: '', fontFamily: 'Consolas', keybindings: {} } as unknown as Settings} />);
+        const slider = host.querySelector('input[type="range"]') as HTMLInputElement;
+        const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+        act(() => {
+            setValue.call(slider, '20');
+            slider.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(onPreview).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: 20, theme: 'dark', fontFamily: 'Consolas' }));
+        expect(onSave).not.toHaveBeenCalled();
+    });
 });
 
 describe('recording a shortcut with the + key', () => {

@@ -3,11 +3,17 @@ import type { Settings } from '../types';
 import { FONT_FAMILIES, UI_FONTS } from '../utils/fontOptions';
 import { MAX_FONT_SIZE, MIN_FONT_SIZE } from '../constants';
 
+/** Appearance shown live while Settings is open; Save keeps it, Cancel drops it. */
+export type AppearancePreview = Pick<Settings, 'theme' | 'uiFont' | 'fontFamily' | 'fontSize'>;
+
 interface SettingsModalProps {
     isOpen: boolean;
     onClose: () => void;
+    /** The saved settings (not the preview), so the form starts from them. */
     settings: Settings;
     onSave: (settings: Partial<Settings>) => void;
+    /** Called as theme, fonts or size change, so the app shows them at once. */
+    onPreview?: (preview: AppearancePreview) => void;
 }
 
 type SettingsTab = 'editor' | 'files' | 'privacy' | 'advanced';
@@ -290,7 +296,7 @@ function InfoBlock({ children }: { children: React.ReactNode }) {
     return <div className="s-info-block">{children}</div>;
 }
 
-export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsModalProps) {
+export function SettingsModal({ isOpen, onClose, settings, onSave, onPreview }: SettingsModalProps) {
     const [activeTab, setActiveTab] = useState<SettingsTab>('editor');
     const [theme, setTheme] = useState(settings.theme);
     const [fontFamily, setFontFamily] = useState(settings.fontFamily);
@@ -322,6 +328,11 @@ export function SettingsModal({ isOpen, onClose, settings, onSave }: SettingsMod
         setFormatOnSave(settings.formatOnSave);
         setCheckForUpdates(settings.checkForUpdates);
     }, [isOpen, settings]);
+
+    // Show theme, font and size changes as they are picked.
+    useEffect(() => {
+        if (isOpen) onPreview?.({ theme, uiFont, fontFamily, fontSize });
+    }, [isOpen, onPreview, theme, uiFont, fontFamily, fontSize]);
 
     if (!isOpen) return null;
 

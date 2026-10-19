@@ -87,6 +87,7 @@ const fake = vi.hoisted(() => {
                     getAction: () => null,
                     actions: [] as string[],
                     addAction: (action: { id: string }) => { editor.actions.push(action.id); return { dispose() {} }; },
+                    addCommand: () => null,
                     onDidFocusEditorText: () => ({ dispose() {} }),
                 };
                 editors.push(editor);

@@ -3352,6 +3352,10 @@ fn build_app_menu(
     // No default key: Cmd+K here would swallow Monaco's Cmd+K chords.
     let m_open_folder = shortcut_item("open_folder", "Open Folder...", "openFolder", None)?;
 
+    // Always enabled: the menu is not rebuilt as folders open and close, and
+    // the renderer ignores it while no folder is open.
+    let m_close_folder =
+        MenuItem::with_id(handle, "close_folder", "Close Folder", true, None::<&str>)?;
     let m_open_large = MenuItem::with_id(
         handle,
         "open_large_file",
@@ -3363,6 +3367,7 @@ fn build_app_menu(
     file_menu.append(&m_new)?;
     file_menu.append(&m_open)?;
     file_menu.append(&m_open_folder)?;
+    file_menu.append(&m_close_folder)?;
     file_menu.append(&m_open_large)?;
     file_menu.append(&PredefinedMenuItem::separator(handle)?)?;
 

@@ -95,6 +95,9 @@ interface MenuBarProps {
     isFullscreen: boolean;
     recentFiles: string[];
     onOpenRecent: (path: string) => void;
+    /** File → Close Folder; enabled while a folder is open. */
+    onCloseFolder?: () => void;
+    hasOpenFolder?: boolean;
     settings: Settings;
     hasActiveTab: boolean;
     /** A Large File / Log, Compare or Scratchpad view on screen: Save, Close,
@@ -165,6 +168,8 @@ export function MenuBar({
     isFullscreen,
     recentFiles,
     onOpenRecent,
+    onCloseFolder,
+    hasOpenFolder = false,
     settings,
     hasActiveTab,
     shownViewKind = null,
@@ -342,6 +347,9 @@ export function MenuBar({
                                 </div>
                                 <div className="menu-option" onClick={() => { onOpenFolder(); closeMenu(); }}>
                                     Open Folder... <span className="shortcut">{getShortcutDisplay('K')}</span>
+                                </div>
+                                <div className={`menu-option ${!hasOpenFolder ? 'disabled' : ''}`} onClick={() => { if (hasOpenFolder) { onCloseFolder?.(); closeMenu(); } }}>
+                                    Close Folder
                                 </div>
                                 <div className="menu-option" onClick={() => { onOpenLargeFile(); closeMenu(); }}>
                                     Open Large File or Log...

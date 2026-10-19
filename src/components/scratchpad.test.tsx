@@ -53,6 +53,7 @@ const fake = vi.hoisted(() => {
                     focus: () => {}, layout: () => {}, getModel: () => entry.model,
                     updateOptions: (next: Record<string, unknown>) => Object.assign(entry.options, next),
                     addAction: (action: { id: string }) => { entry.actions.push(action.id); },
+                    addCommand: () => null,
                     getAction: () => null,
                     dispose: () => { entry.disposed = true; },
                 };

@@ -256,7 +256,12 @@ export function useFileManager(
         cursorColumn: number = 1,
         scrollTop: number = 0,
         scrollLeft: number = 0,
-        skipMenuRebuild: boolean = false
+        skipMenuRebuild: boolean = false,
+        // The caller reports a failure itself (session restore opens unsaved
+        // edits of a file it can't reopen as a Recovered tab, with its own
+        // notice), so no message here: any (missing, too large, binary) would
+        // only repeat it.
+        callerReportsFailure: boolean = false,
     ): Promise<string | null> => {
         try {
             // Check if file is already open BEFORE acquiring the lock so the
@@ -375,6 +380,10 @@ export function useFileManager(
             return newTab.id;
         } catch (error) {
             const msg = String(typeof error === 'string' ? error : (error instanceof Error ? error.message : error));
+            if (callerReportsFailure) {
+                console.warn('[openFile] Could not reopen; the caller reports it:', path, msg);
+                return null;
+            }
             // Too big for the editor: the Large File viewer reads it from disk
             // a part at a time, read-only. Asked only when someone opened the
             // file just now; batched opens at startup (session restore,
@@ -416,10 +425,11 @@ export function useFileManager(
         scrollTop: number = 0,
         scrollLeft: number = 0,
         skipMenuRebuild: boolean = false,
+        callerReportsFailure: boolean = false,
     ): Promise<string | null> => {
         const pending = openingFiles.current.get(path);
         if (pending) return pending;
-        const opening = openFileOnce(path, cursorLine, cursorColumn, scrollTop, scrollLeft, skipMenuRebuild)
+        const opening = openFileOnce(path, cursorLine, cursorColumn, scrollTop, scrollLeft, skipMenuRebuild, callerReportsFailure)
             .finally(() => openingFiles.current.delete(path));
         openingFiles.current.set(path, opening);
         return opening;

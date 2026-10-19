@@ -4,11 +4,12 @@
  * the next launch (utils/scratchpad). Its language is only for highlighting
  * and is remembered on this computer.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { editor } from 'monaco-editor';
 import monaco from '../monaco-config';
 import { flushScratchpad, loadScratchpad, onScratchpadSaveState, scheduleScratchpadSave, scratchpadSaveProblem } from '../utils/scratchpad';
 import { addClipboardActions } from '../utils/clipboardActions';
+import { leaveFindAndGoToLineToApp } from '../utils/viewEditorKeys';
 import { LANGUAGES } from '../utils/languages';
 import type { ViewCommands } from '../utils/workspaceViews';
 
@@ -19,6 +20,11 @@ interface ScratchpadViewProps {
     fontSize: number;
     wordWrap: boolean;
     onRegisterCommands: (commands: ViewCommands | null) => void;
+    /** The app's Find & Replace bar, placed over the editor (Monaco's own
+     *  find widget is hidden app-wide). */
+    findBar?: ReactNode;
+    /** The editor was created; the Find bar re-attaches to it. */
+    onEditorChange?: () => void;
 }
 
 export const SCRATCHPAD_URI = 'inmemory://scratchpad/note';
@@ -32,7 +38,7 @@ function storedLanguage(): string {
     return 'plaintext';
 }
 
-export function ScratchpadView({ visible, editorTheme, fontFamily, fontSize, wordWrap, onRegisterCommands }: ScratchpadViewProps) {
+export function ScratchpadView({ visible, editorTheme, fontFamily, fontSize, wordWrap, onRegisterCommands, findBar, onEditorChange }: ScratchpadViewProps) {
     const host = useRef<HTMLDivElement>(null);
     const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
     const [language, setLanguage] = useState(storedLanguage);
@@ -40,8 +46,8 @@ export function ScratchpadView({ visible, editorTheme, fontFamily, fontSize, wor
     const [loadError, setLoadError] = useState<string | null>(null);
     const [saveProblem, setSaveProblem] = useState(scratchpadSaveProblem);
     useEffect(() => onScratchpadSaveState(() => setSaveProblem(scratchpadSaveProblem())), []);
-    const latest = useRef({ fontFamily, fontSize, wordWrap, language });
-    latest.current = { fontFamily, fontSize, wordWrap, language };
+    const latest = useRef({ fontFamily, fontSize, wordWrap, language, onEditorChange });
+    latest.current = { fontFamily, fontSize, wordWrap, language, onEditorChange };
 
     useEffect(() => {
         let cancelled = false;
@@ -67,6 +73,7 @@ export function ScratchpadView({ visible, editorTheme, fontFamily, fontSize, wor
                     scrollBeyondLastLine: false,
                 });
                 addClipboardActions(instance);
+                leaveFindAndGoToLineToApp(instance);
                 const listener = model.onDidChangeContent(() => scheduleScratchpadSave(model.getValue()));
                 created = { editor: instance, model, listener };
                 editorRef.current = instance;
@@ -113,13 +120,15 @@ export function ScratchpadView({ visible, editorTheme, fontFamily, fontSize, wor
     useEffect(() => {
         if (!visible) return;
         editorRef.current?.layout();
+        // Find and Go to Line use the app's own bar and dialog on activeEditor
+        // (App), like documents do.
         onRegisterCommands({
-            find: () => { void editorRef.current?.getAction('actions.find')?.run(); },
-            goToLine: () => { void editorRef.current?.getAction('editor.action.gotoLine')?.run(); },
             // Saved continuously; Save just makes sure nothing is waiting.
             save: () => { void flushScratchpad(); },
             activeEditor: () => editorRef.current,
         });
+        // After registering: shown or created, the Find bar re-attaches.
+        if (editorRef.current) latest.current.onEditorChange?.();
         return () => onRegisterCommands(null);
     }, [visible, onRegisterCommands, state]);
 
@@ -140,7 +149,10 @@ export function ScratchpadView({ visible, editorTheme, fontFamily, fontSize, wor
                     <span>Not saved: {saveProblem} Changes are kept here and saved as soon as that works.</span>
                 </div>
             )}
-            <div ref={host} className="compare-editor" />
+            <div className="view-editor-area">
+                {findBar}
+                <div ref={host} className="compare-editor" />
+            </div>
         </div>
     );
 }

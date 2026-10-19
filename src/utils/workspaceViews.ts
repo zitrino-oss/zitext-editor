@@ -29,6 +29,16 @@ export function fileNameOf(path: string): string {
     return path.split(/[/\\]/).pop() || path;
 }
 
+/** Log viewers open at once; matches MAX_SESSIONS in src-tauri/src/large_file.rs. */
+export const MAX_LOG_VIEWS = 8;
+export const TOO_MANY_LOG_VIEWS = 'Too many large files are open. Close one first.';
+
+/** Whether one more Log viewer fits. Checked before its tab is added, so a
+ *  refused open shows only the message, not an extra tab with the error. */
+export function canOpenAnotherLogView(views: readonly WorkspaceView[]): boolean {
+    return views.filter(view => view.kind === 'log').length < MAX_LOG_VIEWS;
+}
+
 /** Commands the shown view answers to (Find, Go to Line, Save) when they are
  *  pressed while it has the editor area. */
 export interface ViewCommands {
