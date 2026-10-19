@@ -4429,7 +4429,9 @@ fn is_app_navigation(url: &url::Url) -> bool {
         "about" => return url.path() == "blank",
         _ => false,
     };
-    app_origin && matches!(url.path(), "/" | "/index.html")
+    // The app loads from `tauri://localhost`, whose path is empty rather
+    // than "/" (only http(s) and other special schemes get a "/" path).
+    app_origin && matches!(url.path(), "" | "/" | "/index.html")
 }
 
 // ============================================================================
@@ -5485,6 +5487,9 @@ mod tests {
     #[test]
     fn webview_may_only_navigate_to_the_app_page() {
         let allowed = |u: &str| is_app_navigation(&url::Url::parse(u).unwrap());
+        // The URL Tauri loads the app from on macOS and Linux.
+        assert_eq!(url::Url::parse("tauri://localhost").unwrap().path(), "");
+        assert!(allowed("tauri://localhost"));
         assert!(allowed("tauri://localhost/"));
         assert!(allowed("tauri://localhost/index.html"));
         assert!(allowed("http://tauri.localhost/"));
