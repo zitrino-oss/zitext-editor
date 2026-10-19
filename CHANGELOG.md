@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-10-19
+
+### Fixed
+- On macOS and Linux, version 2.2.0 opened to a blank white window: the check that stops the editor window from navigating away from the app also refused the app's own start page. Windows was not affected.
+
 ## [2.2.0] - 2026-10-19
 
 ### Added
@@ -232,7 +237,8 @@ Initial public release baseline. Highlights:
 - Light/dark themes that follow the OS theme on first launch
 - Update notifications with one-click download from the website
 
-[Unreleased]: https://github.com/zitrino-oss/zitext-editor/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/zitrino-oss/zitext-editor/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/zitrino-oss/zitext-editor/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/zitrino-oss/zitext-editor/compare/v2.1.5...v2.2.0
 [2.1.5]: https://github.com/zitrino-oss/zitext-editor/compare/v2.1.4...v2.1.5
 [2.1.4]: https://github.com/zitrino-oss/zitext-editor/releases/tag/v2.1.4
