@@ -4,9 +4,9 @@ const thresholdsNs = {
   read_file_10KB: 10_000_000,
   read_file_500KB: 50_000_000,
   read_file_5MB: 300_000_000,
-  write_file_1MB: 500_000_000,
-  search_file_1MB: 100_000_000,
-  read_directory_200_files: 100_000_000,
+  save_file_1MB: 500_000_000,
+  search_in_files_1MB_plus_200_files: 100_000_000,
+  read_directory_205_entries: 100_000_000,
   validate_path: 10_000_000,
 };
 
