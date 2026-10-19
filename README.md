@@ -168,7 +168,7 @@ quality bar, and the pull-request process. Please also read our
 
 ## License
 
-Licensed under the Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Licensed under the Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The bundled fonts keep their own licenses (SIL Open Font License and Ubuntu Font Licence); see [public/fonts/licenses](public/fonts/licenses/README.txt).
 
 ## Tech stack
 

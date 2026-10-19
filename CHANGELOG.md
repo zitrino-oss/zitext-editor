@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-19
+
 ### Added
 - Find works inside the Markdown preview. (#92)
 - On Windows and Linux, the in-app menu bar has the editing commands (Undo, Redo, Cut, Copy, Paste, Select All, Toggle Line Comment) and full screen (**F11**). (#92)
@@ -14,16 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New fonts: Space Grotesk (the new interface default), Geist, IBM Plex Sans and IBM Plex Mono. (#104)
 - ZITEXT remembers the window's size and position (and whether it was maximized) between launches. A saved position that is no longer on any screen is ignored.
 - The Explorer and **Find in Files** say how many symbolic links they left out. Links are still not followed, since they can point outside the open folder.
-- **Large File and Log viewer** (**File → Open Large File or Log…**, or offered when a file is over the editor's 10 MB limit). Opens files of any size read-only, reading only the part on screen. Follows a log as it grows (**Live**, **Follow**, **Latest**) and notices when it is rotated, truncated or deleted. Filters lines in or out by text or regular expression, combined with AND or OR, without changing the file. Highlights errors, warnings, info and debug lines, HTTP status codes, request IDs and your own keywords. **Go to** takes a line number, a percentage or a time; **Find** searches the whole file; lines can be bookmarked. Filtered, highlighted, selected or bookmarked lines can be exported to a new file, byte for byte.
+- **Large File and Log viewer** (**File → Open Large File or Log…**, or offered when a file is over the editor's 10 MB limit). Opens files of any size read-only, reading only the part on screen. Follows a log as it grows (**Live**, **Follow**, **Latest**) and notices when it is rotated, truncated or deleted. Filters lines in or out by text or regular expression, combined with AND or OR, without changing the file. Highlights errors, warnings, info and debug lines, HTTP status codes, request IDs and your own keywords. **Go to** takes a line number, a percentage or a time; **Find** searches the whole file; lines can be bookmarked. Filtered, highlighted, selected or bookmarked lines can be exported to a new file, byte for byte. Up to eight large files can be open at once.
 - **File Compare** (**File → Compare**, or the command palette): compare the current document with another file, another open tab, the clipboard, or its saved version on disk. Side by side or inline, with added, removed and changed lines and the changed characters marked. Step through changes (first, previous, next, last; **Alt+F5**), copy a change to either side, and ignore leading/trailing whitespace, all whitespace, case or blank lines. Edits made in the comparison are ordinary edits to the document (undo, autosave, Save).
 - **Text and Data Tools** (**Tools** menu and the command palette): sort lines A–Z, Z–A or by number; remove duplicate, empty or repeated blank lines; trim, reverse, join and split lines; count unique lines; upper, lower and title case; URL, Base64, HTML and JSON encoding and decoding; JWT decoding (on your computer, signature not checked); UUIDs; SHA-256 and MD5 checksums; Unix timestamp ↔ date; CSV, TSV and JSON conversions (values kept exactly as text) and XML minification. They act on the selection, or on the whole document, as one undo step, and never change a read-only document.
 - **Marks** (**Tools → Mark Selection**, **Cmd/Ctrl+Shift+M**, or **Mark** in the Find bar): keep every occurrence of text or a regular expression highlighted, in up to six colours, while you edit; **F4** / **Shift+F4** go to the next or previous one, and marks are cleared one at a time or all at once.
 - **Scratchpad** (**Tools → Open Scratchpad**, **Cmd/Ctrl+Shift+N**): a note with no file name and no Save dialog. It saves itself as you type (in ZITEXT's private data folder) and is there again on the next launch, including after quitting with **Don't Save**.
+- In the **Scratchpad** and **File Compare**, **Find & Replace** and **Go to Line** use the same Find bar and dialog as documents (in File Compare, on the pane you last clicked). (#112)
+- **File → Close Folder**, also in the command palette while a folder is open: closes the project folder, and files open from it stay open. (#112)
+- **Settings** shows theme, font and font size changes as you pick them. **Save** keeps them; **Cancel** puts back the previous look. (#112)
 
 ### Changed
 - Redesigned interface: new colours and typography, language badges in the Language menu and status bar, and on Windows the app draws its own window controls. (#104)
 - The macOS minimum system version is now 10.15, the oldest version the app framework supports.
 - The README describes crash recovery accurately (a normal quit starts fresh), how to install the command-line wrapper, when column selection is available, and the Node.js version the project needs (22.22.2 or later 22.x). SECURITY.md no longer claims the content security policy is off during development.
+- The license and copyright notice of each bundled font are now included in the repository and the app (`public/fonts/licenses`), and NOTICE lists the fonts.
 
 ### Fixed
 - **Revert File** no longer overwrites a newer version of the file changed by another program without asking. It checks the file's on-disk version first and asks before replacing an external change, and it now waits for any save already in progress.
@@ -33,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unsaved edits recovered after a crash no longer overwrite changes made to the same file after the crash. The file is marked as changed on disk, and saving asks before overwriting.
 - Opening ZITEXT with a file (double-click, **Open With**, or the command line) after a crash no longer discards the previous session's unsaved work. The session is restored and the opened file becomes the active tab.
 - Answering the **Restore Previous Session** prompt late no longer loses recovered files: a late **Restore** still reopens them, and the stored recovery data is kept untouched until the prompt is answered, even if you quit first.
-- Unsaved changes to a file that was deleted, moved or became unreadable before recovery now reopen in a **Recovered** tab instead of being lost.
+- Unsaved changes to a file that was deleted, moved or became unreadable before recovery now reopen in a **Recovered** tab, with a single notice, instead of being lost.
 - One unavailable file or an oversized document no longer disables crash recovery for every tab. Recovery keeps everything that fits, and tells you once if a document is too large to keep a copy of; recovery failures are now reported instead of being silent.
 - Untitled documents containing only whitespace are now kept by crash recovery.
 - Switching a split-view pane to a Markdown preview tab and back no longer crashes the editor into the error screen, and toggling preview or split view no longer loses a document's undo history.
@@ -117,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With the Markdown preview open beside the editor, the preview updates when you pause typing instead of on every keystroke.
 - ZITEXT starts with less to load: the Markdown preview loads the first time a document is previewed.
 - **Toggle Markdown Preview** is only available for Markdown (and MDX) files; it used to render any file as Markdown.
-- **Open Recent** no longer lists files that have since been deleted or moved.
+- **Open Recent** no longer lists files that have since been deleted or moved. The recent files on the Welcome screen, and in the File menu on Windows and Linux, are checked again when ZITEXT comes back to the front.
 - The window title names a new document as its tab does ("Untitled-3"), and follows whichever split-view pane has focus.
 - The status bar shows the file's size in bytes as saved (UTF-8, UTF-8 with BOM or Windows-1252). It showed the number of characters, which is smaller for accented letters and emoji.
 - The **Font size** setting goes up to 72, as zoom does (it stopped at 32).
@@ -140,7 +146,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Save As dialog only accepts a plain file name as its suggestion from the editor window, so it can't be pointed at another folder.
 - Links that contain a user name or password, and email links with fields other than to, cc, bcc, subject and body, are no longer opened. The confirmation names the website or recipient on a line of its own, so a long link can't hide it.
 - macOS: the channel a second launch uses to hand files to the running ZITEXT now lives in your own private folder, and both sides check that the other belongs to the same user. Before, another account on the same Mac could intercept the file paths you opened from the command line, or stop ZITEXT from opening them.
-
 - Closing the project folder, or opening a different one, ends ZITEXT's access to it. Files still open from that folder stay editable.
 - The Markdown preview's link handling is the only code that opens links: the link-opening helper the opener plugin adds to every page is turned off, and links are opened by their parsed address. Unused `asset:` entries were removed from the content security policy.
 - A crash-recovery snapshot written while the app is closing can no longer bring back a session you chose to discard.
@@ -227,7 +232,8 @@ Initial public release baseline. Highlights:
 - Light/dark themes that follow the OS theme on first launch
 - Update notifications with one-click download from the website
 
-[Unreleased]: https://github.com/zitrino-oss/zitext-editor/compare/v2.1.5...HEAD
+[Unreleased]: https://github.com/zitrino-oss/zitext-editor/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/zitrino-oss/zitext-editor/compare/v2.1.5...v2.2.0
 [2.1.5]: https://github.com/zitrino-oss/zitext-editor/compare/v2.1.4...v2.1.5
 [2.1.4]: https://github.com/zitrino-oss/zitext-editor/releases/tag/v2.1.4
 [2.1.3]: https://github.com/zitrino-oss/zitext-editor/releases/tag/v2.1.3
