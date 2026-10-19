@@ -1,5 +1,7 @@
-/* Self-hosted fonts (latin subset). Generated from Google Fonts and
-   served locally so the app makes no external font requests. */
+/* Self-hosted fonts (latin subset). Generated from Google Fonts (Geist, at
+   the end, is Vercel's full release) and served locally so the app makes no
+   external font requests. Their licenses (SIL Open Font License, Ubuntu Font
+   Licence) are in fonts/licenses. */
 
 @font-face {
   font-family: 'Courier Prime';

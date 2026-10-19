@@ -9,3 +9,9 @@ full license text.
 This product bundles third-party open-source components, including the Monaco
 Editor and the dependencies listed in package.json and src-tauri/Cargo.toml,
 each distributed under its own license.
+
+It also bundles these fonts, which are not covered by the Apache License:
+Courier Prime, Fira Code, Geist, IBM Plex Mono, IBM Plex Sans, Inter,
+JetBrains Mono, Roboto Mono, Source Code Pro, Space Grotesk and Space Mono
+(SIL Open Font License 1.1), and Ubuntu Mono (Ubuntu Font Licence 1.0).
+Their copyright notices and license texts are in public/fonts/licenses.
