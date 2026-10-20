@@ -50,7 +50,7 @@ import { markOpenListenersReady } from './utils/openRequests';
 import { canPreviewMarkdown, isJsoncPath, LANGUAGES, showsPreview } from './utils/languages';
 import { windowCaption } from './utils/windowTitle';
 import { shouldFormatOnSave } from './utils/dataTransform';
-import { canOpenAnotherLogView, fileNameOf, newViewId, onDocumentOpened, onLargeFileRequest, TOO_MANY_LOG_VIEWS, type CompareSide, type ViewCommands, type WorkspaceView } from './utils/workspaceViews';
+import { canOpenAnotherLogView, fileNameOf, newViewId, onDocumentOpened, onLargeFileRequest, TOO_MANY_LOG_VIEWS, viewAfterClosing, type CompareSide, type ViewCommands, type WorkspaceView } from './utils/workspaceViews';
 import type { ResolvedSide } from './components/CompareView';
 import type { Tab } from './types';
 import type { ViewTab } from './components/TabBar';
@@ -297,9 +297,6 @@ function App() {
     const [unsavedChangesModalOpen, setUnsavedChangesModalOpen] = useState(false);
     const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
     const [showFindInFiles, setShowFindInFiles] = useState(false);
-    // Mounted on first use, then kept (hidden) so its results survive.
-    const [findInFilesUsed, setFindInFilesUsed] = useState(false);
-    useEffect(() => { if (showFindInFiles) setFindInFilesUsed(true); }, [showFindInFiles]);
     const [showDiagnostics, setShowDiagnostics] = useState(false);
     const [appCloseModalOpen, setAppCloseModalOpen] = useState(false);
     const closeRequestTokenRef = useRef<string | null>(null);
@@ -1010,9 +1007,24 @@ function App() {
     }, []);
 
     const closeView = useCallback((id: string) => {
+        const next = viewAfterClosing(viewsRef.current, id);
         setViews(current => current.filter(view => view.id !== id));
-        setActiveView(current => (current?.id === id ? null : current));
+        setActiveView(current => {
+            if (current?.id !== id) return current;
+            // Closing the view on screen shows its neighbour, so the Welcome
+            // screen doesn't appear while other views are still open. A view
+            // closed while a document is on screen leaves that document.
+            const wasShown = current.tabId === activeTabIdRef.current;
+            return wasShown && next ? { id: next, tabId: current.tabId } : null;
+        });
     }, []);
+
+    // The same when the last document tab closes while views are open: the
+    // first view (next in the tab bar) is shown, not the Welcome screen.
+    const firstViewId = views[0]?.id ?? null;
+    useEffect(() => {
+        if (tabs.length === 0 && !shownView && firstViewId) setActiveView({ id: firstViewId, tabId: activeTabIdRef.current });
+    }, [tabs.length, shownView, firstViewId]);
 
     const openLogView = useCallback(async (path?: string) => {
         const target = path ?? await openFileDialog();
@@ -1820,12 +1832,12 @@ function App() {
             <div className="app-main">
                 {/* Sidebar: Find in Files always shows when toggled on (even if the
                     Explorer sidebar is collapsed); otherwise the Explorer respects collapse. */}
-                {/* Both panels stay mounted while hidden, so the explorer's
-                    expanded folders and the search results survive toggling. */}
-                {(findInFilesUsed || showFindInFiles) && (
+                {/* The explorer stays mounted while hidden so its expanded
+                    folders survive toggling. Search does not: closing it
+                    discards the query and results, so it reopens fresh. */}
+                {showFindInFiles && (
                     <Suspense fallback={null}>
                     <FindInFiles
-                        visible={showFindInFiles}
                         folderPath={openedFolder}
                         width={sidebarWidth}
                         onOpenFile={handleOpenFileAtLine}
@@ -1956,6 +1968,7 @@ function App() {
                             onOpenFolder={handleOpenFolder}
                             recentFiles={recentFiles}
                             onOpenRecent={handleOpenRecent}
+                            appVersion={appVersion}
                         />
                     ) : activeTab ? (
                         <div id="editor-workspace" className="editor-wrapper" style={{ position: 'relative' }}>

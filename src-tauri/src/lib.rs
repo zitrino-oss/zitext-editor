@@ -689,7 +689,9 @@ const MAX_SESSION_HASH_LEN: usize = 128;
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            theme: "dark".to_string(),
+            // Follows the OS; the renderer resolves it and re-derives
+            // editor_theme to match on load.
+            theme: "system".to_string(),
             // JetBrains Mono is bundled, so it resolves on every platform; the
             // rest of the chain only matters if the webview fails to load it.
             // Must match DEFAULT_SETTINGS.fontFamily in useSettingsManager.ts.
@@ -1850,9 +1852,9 @@ async fn read_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
 
 /// Returns whether a settings.json already exists. The renderer uses this as an
 /// explicit first-run signal: `read_settings` returns `AppSettings::default()`
-/// (theme = "dark") for a missing file, so it cannot tell "no file yet" from
-/// "saved all-defaults". On true first run the renderer derives the initial
-/// theme from the OS instead of the hard-coded dark default.
+/// for a missing file, so it cannot tell "no file yet" from "saved
+/// all-defaults". On true first run the renderer writes the defaults (theme
+/// "system") so settings.json exists from then on.
 #[tauri::command]
 async fn settings_file_exists(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(get_config_path(app)?.exists())
@@ -3870,6 +3872,26 @@ fn search_file(
     } else {
         options.query.chars().flat_map(char::to_lowercase).collect()
     };
+
+    // Most files don't contain the query. Check the whole file once, lowered
+    // the same way as each line below, before paying for the per-line copies
+    // and position maps — those dominated a search over a large tree.
+    // Lower-casing never produces a line break, so a match inside a line is
+    // always a match in the whole file: skipping on a miss loses nothing.
+    let file_matches = if options.case_sensitive {
+        content.contains(needle.as_str())
+    } else if content.is_ascii() {
+        content.to_ascii_lowercase().contains(needle.as_str())
+    } else {
+        content
+            .chars()
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+            .contains(needle.as_str())
+    };
+    if !file_matches {
+        return;
+    }
 
     for (line_idx, line) in editor_lines(&content).enumerate() {
         if results.len() >= options.max_results {

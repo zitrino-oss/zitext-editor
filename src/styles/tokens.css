@@ -140,6 +140,9 @@
   /* Must stay below --bg-chrome to read as recessed; it was lighter once the
      chrome dropped to the editor's ground. */
   --bg-sunken: #121418;
+  /* Resting card on the editor ground (welcome screen) — one step up from
+     --bg so the card reads as a surface rather than an outline. */
+  --bg-card: #1a1d22;
   --text-disabled: #4d5560;
   /* Find matches. --match-ruler is read as a string by Monaco's overview
      ruler, which takes a colour value rather than a CSS variable. */
@@ -158,6 +161,7 @@
   --ok-soft: rgba(46, 168, 119, 0.12);
   --border-subtle: #eceef2;
   --bg-sunken: #f0f2f5;
+  --bg-card: #f7f8fa;
   --text-disabled: #a8b0bb;
   --match-bg: rgba(242, 166, 59, 0.38);
   --match-current-bg: rgba(242, 166, 59, 0.62);

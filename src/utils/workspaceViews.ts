@@ -41,6 +41,17 @@ export function canOpenAnotherLogView(views: readonly WorkspaceView[]): boolean 
 
 /** Commands the shown view answers to (Find, Go to Line, Save) when they are
  *  pressed while it has the editor area. */
+/** The view to show after closing the one on screen: the one that takes its
+ *  place in the tab bar, else the one before it, as closing a document tab
+ *  does. Null when no other view is left (the document comes back). */
+export function viewAfterClosing(views: readonly WorkspaceView[], closedId: string): string | null {
+    const index = views.findIndex(view => view.id === closedId);
+    if (index < 0) return null;
+    const remaining = views.filter(view => view.id !== closedId);
+    if (remaining.length === 0) return null;
+    return remaining[Math.min(index, remaining.length - 1)].id;
+}
+
 export interface ViewCommands {
     find?: () => void;
     goToLine?: () => void;
