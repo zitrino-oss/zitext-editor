@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Windows and Linux: moving the pointer from a menu item such as **File → Compare** to its submenu could close the whole menu before the pointer got there, especially with a touchpad or at 125% or 150% display scaling. There was a 3-pixel gap between a menu and its submenu.
+- The **Find in Files** sidebar (**Cmd/Ctrl+Shift+F**) has the same background and border as the Explorer, including behind its results; it showed white below the search box and under the results, and with no folder open its **Open Folder** prompt sat halfway down the panel instead of at the top.
 
 ## [2.2.1] - 2026-10-19
 

@@ -1910,6 +1910,9 @@ body {
   flex-shrink: 0;
   min-width: 150px;
   max-width: 600px;
+  /* The same panel as the Explorer, which it replaces in the sidebar. */
+  background-color: var(--bg-chrome);
+  border-right: 1px solid var(--border);
 }
 
 /* Header and search row are shared with FileExplorer (.file-explorer-header,
@@ -2015,7 +2018,6 @@ body {
   text-align: center;
   color: var(--text-muted);
   gap: 12px;
-  height: 100%;
 }
 
 .find-in-files-empty p {
@@ -2046,11 +2048,12 @@ body {
   cursor: pointer;
   text-align: left;
   transition: background-color 0.15s;
-  background-color: var(--bg-hover);
 }
 
+/* Results sit on the sidebar's own background, and rows highlight on hover
+   as the Explorer's do. */
 .find-result-file:hover {
-  background-color: var(--bg-chrome);
+  background-color: var(--bg-hover);
 }
 
 .find-result-file-arrow {
@@ -2086,10 +2089,6 @@ body {
   flex-shrink: 0;
 }
 
-.find-result-matches {
-  background-color: var(--bg);
-}
-
 .find-result-match {
   display: flex;
   align-items: baseline;
@@ -2108,7 +2107,7 @@ body {
 }
 
 .find-result-match:hover {
-  background-color: var(--bg-chrome);
+  background-color: var(--bg-hover);
   color: var(--text);
 }
 
