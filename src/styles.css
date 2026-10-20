@@ -340,6 +340,19 @@ body {
   margin-left: 9px;
 }
 
+/* An invisible strip over the 3px between a menu and its submenu. The menu
+   closes when the pointer leaves it, so without this a pointer crossing the
+   gap (easily hit with a touchpad or at 125%/150% display scaling) closed
+   the whole menu before it reached the submenu. */
+.menu-dropdown-nested::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  right: 100%;
+  width: 9px;
+}
+
 
 .menu-submenu {
   position: relative;
