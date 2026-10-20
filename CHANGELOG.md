@@ -9,8 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.2.2] - 2026-10-20
 
+### Changed
+- **Find in Files** is faster across large folders: a file that doesn't contain the search text is skipped before it is searched line by line.
+- Closing the **Find in Files** panel clears its search and results, so it opens fresh next time, and stops a search that is still running. Emptying the search box clears the results straight away.
+- New installs follow the operating system's light or dark setting (the **System** theme) until another theme is chosen in Settings. A theme you already picked is kept.
+- The Welcome screen shows the version you are running, and its shortcut hints read **Shift** instead of ⇧ on Windows and Linux.
+
 ### Fixed
 - Windows and Linux: moving the pointer from a menu item such as **File → Compare** to its submenu could close the whole menu before the pointer got there, especially with a touchpad or at 125% or 150% display scaling. There was a 3-pixel gap between a menu and its submenu.
+- Windows and Linux: long submenus, such as the **Language** groups, stay inside the window. They move up when they would run past the bottom edge, and scroll when they are too long to fit.
 - The **Find in Files** sidebar (**Cmd/Ctrl+Shift+F**) has the same background and border as the Explorer, including behind its results; it showed white below the search box and under the results, and with no folder open its **Open Folder** prompt sat halfway down the panel instead of at the top.
 - Closing the Large File / Log viewer, File Compare or Scratchpad tab on screen shows the tab next to it, as closing a document tab does. It used to show the Welcome screen when no document was open, even with other viewer tabs still open; closing the last document tab while viewer tabs are open now shows the first of them.
 
