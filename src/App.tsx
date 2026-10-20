@@ -50,7 +50,7 @@ import { markOpenListenersReady } from './utils/openRequests';
 import { canPreviewMarkdown, isJsoncPath, LANGUAGES, showsPreview } from './utils/languages';
 import { windowCaption } from './utils/windowTitle';
 import { shouldFormatOnSave } from './utils/dataTransform';
-import { canOpenAnotherLogView, fileNameOf, newViewId, onDocumentOpened, onLargeFileRequest, TOO_MANY_LOG_VIEWS, type CompareSide, type ViewCommands, type WorkspaceView } from './utils/workspaceViews';
+import { canOpenAnotherLogView, fileNameOf, newViewId, onDocumentOpened, onLargeFileRequest, TOO_MANY_LOG_VIEWS, viewAfterClosing, type CompareSide, type ViewCommands, type WorkspaceView } from './utils/workspaceViews';
 import type { ResolvedSide } from './components/CompareView';
 import type { Tab } from './types';
 import type { ViewTab } from './components/TabBar';
@@ -1010,9 +1010,24 @@ function App() {
     }, []);
 
     const closeView = useCallback((id: string) => {
+        const next = viewAfterClosing(viewsRef.current, id);
         setViews(current => current.filter(view => view.id !== id));
-        setActiveView(current => (current?.id === id ? null : current));
+        setActiveView(current => {
+            if (current?.id !== id) return current;
+            // Closing the view on screen shows its neighbour, so the Welcome
+            // screen doesn't appear while other views are still open. A view
+            // closed while a document is on screen leaves that document.
+            const wasShown = current.tabId === activeTabIdRef.current;
+            return wasShown && next ? { id: next, tabId: current.tabId } : null;
+        });
     }, []);
+
+    // The same when the last document tab closes while views are open: the
+    // first view (next in the tab bar) is shown, not the Welcome screen.
+    const firstViewId = views[0]?.id ?? null;
+    useEffect(() => {
+        if (tabs.length === 0 && !shownView && firstViewId) setActiveView({ id: firstViewId, tabId: activeTabIdRef.current });
+    }, [tabs.length, shownView, firstViewId]);
 
     const openLogView = useCallback(async (path?: string) => {
         const target = path ?? await openFileDialog();
