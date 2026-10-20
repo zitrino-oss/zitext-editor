@@ -22,7 +22,9 @@ export const SUPERSEDED_DEFAULTS: Record<'fontFamily' | 'uiFont', string[]> = {
  *  with different themes during the brief window before backend load. */
 const DEFAULT_SETTINGS: Settings = {
     // Appearance, recent files, and last session
-    theme: 'dark',
+    // Follow the OS until the user picks Light or Dark. editorTheme is
+    // re-derived from this on load by syncEditorThemeToAppTheme.
+    theme: 'system',
     fontFamily: '"JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace',
     uiFont: '"Space Grotesk", system-ui, sans-serif',
     fontSize: DEFAULT_FONT_SIZE,
@@ -90,8 +92,8 @@ export function useSettingsManager() {
     const loadSettings = useCallback(async (): Promise<Settings> => {
         try {
             // First-run signal: read_settings returns AppSettings::default()
-            // (theme "dark") for a missing file, so it can't tell "no file yet"
-            // from "saved all-dark". Check explicitly before loading.
+            // for a missing file, so it can't tell "no file yet" from "saved
+            // all-defaults". Check explicitly before loading.
             const fileExists = await invoke<boolean>('settings_file_exists');
 
             const loadedSettings = await invoke<Settings>('read_settings');
@@ -114,23 +116,13 @@ export function useSettingsManager() {
             // settings file can't leave us with dark chrome + light editor.
             const corrected = syncEditorThemeToAppTheme(merged);
 
-            // Fresh install: no saved preference yet, so follow the OS light/dark
-            // theme rather than the hard-coded dark default. Persist it
+            // Fresh install: start on 'system' so the app keeps following the OS
+            // light/dark setting until the user picks one. Persist it
             // immediately (awaited) — initializeEditor awaits loadSettings before
             // opening any files, so this write lands before add_recent_file or
-            // save_session could otherwise materialize settings.json with dark.
+            // save_session could otherwise materialize settings.json first.
             if (!fileExists) {
-                let osDark = true; // fall back to dark if matchMedia is unavailable
-                try {
-                    if (window.matchMedia) {
-                        osDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                    }
-                } catch { /* keep dark fallback */ }
-                const firstRun: Settings = {
-                    ...corrected,
-                    theme: osDark ? 'dark' : 'light',
-                    editorTheme: osDark ? 'vs-dark' : 'vs',
-                };
+                const firstRun = syncEditorThemeToAppTheme({ ...corrected, theme: 'system' });
                 try {
                     await invoke('write_settings', { settings: firstRun });
                 } catch (e) {

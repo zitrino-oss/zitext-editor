@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getShortcutDisplay, isLinux, isWindows } from '../utils/shortcuts';
 import { WindowControls } from './WindowControls';
 import type { Settings } from '../types';
-import { getDirectEnabledMenuItems, openKeyboardSubmenu } from './menuNavigation';
+import { fitSubmenuToViewport, getDirectEnabledMenuItems, openKeyboardSubmenu } from './menuNavigation';
 import { languageBadge } from '../utils/languageBadges';
 import { LANGUAGE_GROUPS, LANGUAGES } from '../utils/languages';
 import { TEXT_TOOLS, type TextToolId, type TextToolInfo } from '../utils/textToolList';
@@ -322,6 +322,16 @@ export function MenuBar({
                     role="menubar"
                     aria-label="Application menu"
                     onKeyDown={handleMenuKeyDown}
+                    onMouseOver={(event) => {
+                        // Fit only when the pointer first enters a submenu row, so moving
+                        // within an open (possibly scrolled) submenu doesn't reset it.
+                        const submenu = (event.target as HTMLElement).closest<HTMLElement>('.menu-submenu');
+                        if (!submenu || submenu.contains(event.relatedTarget as Node | null)) return;
+                        const nested = submenu.querySelector<HTMLElement>(':scope > .menu-dropdown-nested');
+                        if (nested && !fitSubmenuToViewport(nested)) {
+                            requestAnimationFrame(() => fitSubmenuToViewport(nested));
+                        }
+                    }}
                     onFocus={(event) => {
                         const submenu = (event.target as HTMLElement).closest<HTMLElement>('.menu-submenu');
                         submenu?.setAttribute('aria-expanded', 'true');

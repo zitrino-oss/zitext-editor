@@ -16,11 +16,9 @@ interface FindInFilesProps {
     onOpenFile: (path: string, line: number) => void;
     onOpenFolder: () => void;
     onClose: () => void;
-    /** Hidden panels stay mounted so the query and results survive. */
-    visible?: boolean;
 }
 
-export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClose, visible = true }: FindInFilesProps) {
+export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClose }: FindInFilesProps) {
     const [query, setQuery] = useState('');
     const [caseSensitive, setCaseSensitive] = useState(false);
     const [wholeWord, setWholeWord] = useState(false);
@@ -51,13 +49,28 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
         setIsSearching(false);
     }, [folderPath]);
 
+    // A search still running in the backend keeps reading files until a newer
+    // one supersedes it; an empty query does that and returns at once.
+    const isSearchingRef = useRef(false);
+    isSearchingRef.current = isSearching;
+    const stopBackendSearch = useCallback(() => {
+        if (!isSearchingRef.current) return;
+        invoke('search_in_files', { folder: '', query: '', caseSensitive: false, wholeWord: false }).catch(() => {});
+    }, []);
+
+    // Closing the panel unmounts it; stop any search it left running.
+    useEffect(() => stopBackendSearch, [stopBackendSearch]);
+
     const runSearch = useCallback(async (q: string, cs: boolean, ww: boolean) => {
         const requestId = ++requestIdRef.current;
         if (!folderPath || !q.trim()) {
+            stopBackendSearch();
             setResults([]);
             setTotalMatches(0);
             setSearchedQuery('');
             setSearchError(null);
+            setNotes([]);
+            setElapsed(null);
             setIsSearching(false);
             return;
         }
@@ -105,7 +118,7 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
         } finally {
             if (requestId === requestIdRef.current) setIsSearching(false);
         }
-    }, [folderPath]);
+    }, [folderPath, stopBackendSearch]);
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === 'Enter') {
@@ -134,8 +147,6 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
             : after;
         return { before: displayBefore, match, after: displayAfter };
     };
-
-    if (!visible) return null;
 
     if (!folderPath) {
         return (
@@ -173,7 +184,7 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
                 </div>
             </div>
 
-            <div className="file-explorer-search">
+            <div className="file-explorer-search find-in-files-search">
                 <svg className="find-in-files-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
                     <circle cx="11" cy="11" r="8" />
                     <path d="M21 21l-4.35-4.35" />
@@ -184,12 +195,16 @@ export function FindInFiles({ folderPath, width, onOpenFile, onOpenFolder, onClo
                     className="file-explorer-search-input"
                     placeholder="Search in files… (Enter)"
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    onChange={(e) => {
+                        setQuery(e.target.value);
+                        // Emptying the box clears the old results without waiting for Enter.
+                        if (!e.target.value.trim()) runSearch('', caseSensitive, wholeWord);
+                    }}
                     onKeyDown={handleKeyDown}
                     autoFocus
                 />
                 <button
-                    className="file-explorer-search-clear"
+                    className="file-explorer-search-clear find-in-files-submit"
                     onClick={() => runSearch(query, caseSensitive, wholeWord)}
                     title="Search (Enter)"
                     aria-label="Search"

@@ -7,9 +7,11 @@ interface WelcomeScreenProps {
     onOpenFolder: () => void;
     recentFiles: string[];
     onOpenRecent: (path: string) => void;
+    appVersion: string;
 }
 
 const MOD = isMac ? '⌘' : 'Ctrl';
+const SHIFT = isMac ? '⇧' : 'Shift';
 
 function Kbd({ children }: { children: string }) {
     return <kbd className="ws-kbd">{children}</kbd>;
@@ -21,6 +23,7 @@ export function WelcomeScreen({
     onOpenFolder,
     recentFiles,
     onOpenRecent,
+    appVersion,
 }: WelcomeScreenProps) {
     const getFileName = (p: string) => p.split(/[/\\]/).pop() || p;
     const getDirName = (p: string) => { const parts = p.split(/[/\\]/); parts.pop(); return parts.join('/') || '/'; };
@@ -28,6 +31,7 @@ export function WelcomeScreen({
     return (
         <div className="ws">
             <div className="ws-card">
+            {appVersion && <span className="ws-version">v{appVersion}</span>}
             <div className="ws-inner">
                 {/* Hero */}
                 <div className="ws-hero">
@@ -94,8 +98,8 @@ export function WelcomeScreen({
                                 ['Find',             [MOD, 'F']],
                                 ['Find & Replace',   [MOD, 'H']],
                                 ['Go to Line',       [MOD, 'G']],
-                                ['Command Palette',  [MOD, '⇧', 'P']],
-                                ['Find in Files',    [MOD, '⇧', 'F']],
+                                ['Command Palette',  [MOD, SHIFT, 'P']],
+                                ['Find in Files',    [MOD, SHIFT, 'F']],
                             ].map(([desc, keys]) => (
                                 <div key={desc as string} className="ws-shortcut-row">
                                     <span className="ws-shortcut-label">{desc as string}</span>

@@ -297,9 +297,6 @@ function App() {
     const [unsavedChangesModalOpen, setUnsavedChangesModalOpen] = useState(false);
     const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
     const [showFindInFiles, setShowFindInFiles] = useState(false);
-    // Mounted on first use, then kept (hidden) so its results survive.
-    const [findInFilesUsed, setFindInFilesUsed] = useState(false);
-    useEffect(() => { if (showFindInFiles) setFindInFilesUsed(true); }, [showFindInFiles]);
     const [showDiagnostics, setShowDiagnostics] = useState(false);
     const [appCloseModalOpen, setAppCloseModalOpen] = useState(false);
     const closeRequestTokenRef = useRef<string | null>(null);
@@ -1835,12 +1832,12 @@ function App() {
             <div className="app-main">
                 {/* Sidebar: Find in Files always shows when toggled on (even if the
                     Explorer sidebar is collapsed); otherwise the Explorer respects collapse. */}
-                {/* Both panels stay mounted while hidden, so the explorer's
-                    expanded folders and the search results survive toggling. */}
-                {(findInFilesUsed || showFindInFiles) && (
+                {/* The explorer stays mounted while hidden so its expanded
+                    folders survive toggling. Search does not: closing it
+                    discards the query and results, so it reopens fresh. */}
+                {showFindInFiles && (
                     <Suspense fallback={null}>
                     <FindInFiles
-                        visible={showFindInFiles}
                         folderPath={openedFolder}
                         width={sidebarWidth}
                         onOpenFile={handleOpenFileAtLine}
@@ -1971,6 +1968,7 @@ function App() {
                             onOpenFolder={handleOpenFolder}
                             recentFiles={recentFiles}
                             onOpenRecent={handleOpenRecent}
+                            appVersion={appVersion}
                         />
                     ) : activeTab ? (
                         <div id="editor-workspace" className="editor-wrapper" style={{ position: 'relative' }}>
