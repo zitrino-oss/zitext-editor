@@ -18,7 +18,7 @@
     "node": ">=22.22.2 <23"
   },
   "overrides": {
-    "dompurify": "^3.4.14"
+    "dompurify": "^3.4.17"
   },
   "scripts": {
     "dev": "vite",
@@ -34,7 +34,7 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-clipboard-manager": "^2.5.0",
     "@tauri-apps/plugin-dialog": "^2.8.3",
-    "dompurify": "^3.4.14",
+    "dompurify": "^3.4.17",
     "github-markdown-css": "^5.9.0",
     "jsonc-parser": "^3.3.1",
     "marked": "^18.1.1",
