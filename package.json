@@ -18,7 +18,8 @@
     "node": ">=22.22.2 <23"
   },
   "overrides": {
-    "dompurify": "^3.4.17"
+    "dompurify": "^3.4.17",
+    "minimatch": "^11.0.1"
   },
   "scripts": {
     "dev": "vite",
