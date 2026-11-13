@@ -397,8 +397,8 @@ function App() {
 
     // Listen for custom find/replace events dispatched by Monaco override
     useEffect(() => {
-        const onFind = () => { setFindShowReplace(false); setFindOpen(true); };
-        const onReplace = () => { setFindShowReplace(true); setFindOpen(true); };
+        const onFind = () => { setFindShowReplace(false); setFindOpen(true); setFindRequest(n => n + 1); };
+        const onReplace = () => { setFindShowReplace(true); setFindOpen(true); setFindRequest(n => n + 1); };
         window.addEventListener('zitext-find', onFind);
         window.addEventListener('zitext-replace', onReplace);
         return () => {
@@ -794,6 +794,9 @@ function App() {
 
     const [findOpen, setFindOpen] = useState(false);
     const [findShowReplace, setFindShowReplace] = useState(false);
+    // Bumped on every Find/Replace request, so pressing the shortcut while the
+    // bar is already open still moves focus back into the search input.
+    const [findRequest, setFindRequest] = useState(0);
 
     // Find works in both modes: against the Monaco model in editor mode, and
     // against the rendered DOM while a tab shows the Markdown preview (see
@@ -802,12 +805,14 @@ function App() {
     const handleFind = useCallback(() => {
         setFindShowReplace(false);
         setFindOpen(true);
+        setFindRequest(n => n + 1);
     }, []);
 
     const handleReplace = useCallback(() => {
         if (focusedTab && showsPreview(focusedTab)) togglePreview(focusedTab.id);
         setFindShowReplace(true);
         setFindOpen(true);
+        setFindRequest(n => n + 1);
     }, [focusedTab, togglePreview]);
 
     // ─── Edit menu commands (Windows/Linux) ─────────────────────────────────
@@ -1701,6 +1706,7 @@ function App() {
     const viewFindBar = (
         <FindReplaceBar
             isOpen={findOpen}
+            focusRequest={findRequest}
             showReplace={findShowReplace}
             onClose={() => setFindOpen(false)}
             getEditor={getViewEditor}
@@ -1974,6 +1980,7 @@ function App() {
                         <div id="editor-workspace" className="editor-wrapper" style={{ position: 'relative' }}>
                             <FindReplaceBar
                                 isOpen={findOpen}
+                                focusRequest={findRequest}
                                 showReplace={findShowReplace}
                                 onClose={() => setFindOpen(false)}
                                 getEditor={getActiveEditor}
