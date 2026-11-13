@@ -13,6 +13,8 @@ import { addMark, markProblem, setLastFindQuery } from '../utils/marks';
 
 interface FindReplaceBarProps {
     isOpen: boolean;
+    /** Changes on every Find/Replace request, so an already-open bar re-focuses its input. */
+    focusRequest?: number;
     showReplace: boolean;
     onClose: () => void;
     getEditor: () => editor.IStandaloneCodeEditor | null;
@@ -37,6 +39,7 @@ const WORD_SEPARATORS = '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?';
 
 export function FindReplaceBar({
     isOpen,
+    focusRequest = 0,
     showReplace,
     onClose,
     getEditor,
@@ -66,7 +69,7 @@ export function FindReplaceBar({
 
     useEffect(() => { setReplaceVisible(showReplace); }, [showReplace]);
 
-    // Focus + pre-fill on open
+    // Focus + pre-fill on open, and again on every Find/Replace request while open
     useEffect(() => {
         if (!isOpen) return;
         setTimeout(() => {
@@ -90,7 +93,7 @@ export function FindReplaceBar({
             const text = domSel.toString();
             if (text && !text.includes('\n')) setSearch(text);
         }
-    }, [isOpen, getEditor, getPreviewElement]);
+    }, [isOpen, focusRequest, getEditor, getPreviewElement]);
 
     // Clear decorations helper
     const clearDeco = useCallback(() => {
