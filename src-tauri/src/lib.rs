@@ -410,6 +410,10 @@ fn release_folder_access(folder: String, keep_paths: Vec<String>) {
     };
     for path in keep_paths.iter().take(MAX_SESSION_FILES * 5) {
         if let Ok(authorized) = authorize_path(path) {
+            // authorize_path returns the verbatim (\\?\C:\...) form on Windows;
+            // compare in the same ordinary form as `canonical`, or no open
+            // file is ever kept and closing a folder makes them unsaveable.
+            let authorized = strip_unc_prefix(authorized);
             if authorized.starts_with(&canonical) {
                 grant_file(&authorized);
             }
