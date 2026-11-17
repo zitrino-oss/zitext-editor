@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.3] - 2026-11-17
+
+### Fixed
+- Windows: files still open from a folder could no longer be saved after that folder was closed or another folder was opened. Saving them failed with "Access denied" until they were opened again.
+- Pressing the Find or Replace shortcut (**Cmd/Ctrl+F**, **Ctrl+H**, **Cmd+Option+F**) while the find bar is already open moves the cursor back into its search box, picking up the current selection, as it does when the bar first opens.
+
+### Security
+- Updated DOMPurify, which cleans the **Markdown preview**, to 3.4.17.
+- Updated build tools (Vite, minimatch) to releases that fix their published security advisories. These tools are used to build ZITEXT and are not part of the installed app.
+
+### Dependencies
+- Updated Tauri 2.12.5 and its dialog, opener and single-instance plugins, the Markdown renderer marked 18.2.0, and other minor Rust and npm dependencies.
+
 ## [2.2.2] - 2026-10-20
 
 ### Changed
